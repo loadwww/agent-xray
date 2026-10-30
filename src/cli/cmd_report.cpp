@@ -34,15 +34,6 @@ Status parseReportArgs(const std::vector<std::string>& args, ReportOpts& out) {
     return Status::Ok();
 }
 
-// 主 run：步数最多的那条（并列取最早的）
-const Run* primaryRun(const ChainResult& cr) {
-    if (cr.runs.empty()) return nullptr;
-    const Run* best = &cr.runs.front();
-    for (const auto& r : cr.runs)
-        if (r.steps.size() >= best->steps.size()) best = &r;
-    return best;
-}
-
 } // namespace
 
 int cmdReport(const std::vector<std::string>& args) {

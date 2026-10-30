@@ -1,5 +1,6 @@
 #include "cli/cli.h"
 
+#include <chrono>
 #include <iostream>
 #include <string>
 
@@ -11,16 +12,18 @@
 namespace axr {
 namespace {
 
-// axr show 的参数：目标路径/runID + --config / --root
+// axr show 的参数：目标路径/runID + --config / --root / --bench
 struct ShowOpts {
     std::string target;
+    bool bench = false;
     ProxyCliOpts cfgOpts;
 };
 
 Status parseShowArgs(const std::vector<std::string>& args, ShowOpts& out) {
     for (std::size_t i = 0; i < args.size(); ++i) {
         const std::string& a = args[i];
-        if (a == "--config" && i + 1 < args.size()) out.cfgOpts.configPath = args[++i];
+        if (a == "--bench") out.bench = true;
+        else if (a == "--config" && i + 1 < args.size()) out.cfgOpts.configPath = args[++i];
         else if (a == "--root" && i + 1 < args.size()) out.cfgOpts.rootDir = args[++i];
         else if (!a.empty() && a[0] == '-') return Status::Fail("未知选项: " + a);
         else if (out.target.empty()) out.target = a;
@@ -74,10 +77,15 @@ int cmdShow(const std::vector<std::string>& args) {
         return 1;
     }
     const std::string target = resolveRunInput(opts.target, cfg.value);
+    const auto t0 = std::chrono::steady_clock::now();
     auto chain = buildChainFromEvents(target, cfg.value.chainOptions());
     if (!chain.ok()) {
         std::cerr << chain.err << "\n";
         return 1;
+    }
+    if (opts.bench) {
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        std::cout << "建链耗时: " << ms << " ms（" << target << "）\n\n";
     }
     if (chain.value.runs.empty()) {
         std::cout << "未从 " << target << " 中还原出任何 run\n";

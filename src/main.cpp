@@ -12,24 +12,22 @@
 namespace axr {
 namespace {
 
-const char* kVersion = "0.1.0-m3";
+const char* kVersion = "0.1.0";
 
 void printUsage() {
     std::cout << "AgentXray " << kVersion << "\n\n"
               << "用法:\n"
               << "  axr serve [--config config.yaml] [--root dir] [--listen port] [--bind host]\n"
               << "  axr run [--config config.yaml] [--root dir] [--listen port] -- <command...>\n"
-              << "  axr show <run目录|events.jsonl|runID> [--config config.yaml]\n"
+              << "  axr list [--root dir] [--config config.yaml] [--json]\n"
+              << "  axr show <run目录|events.jsonl|runID> [--bench] [--config config.yaml]\n"
               << "  axr report <run目录|events.jsonl|runID> [--out file] [--config config.yaml]\n"
+              << "  axr export <run目录|events.jsonl|runID> --format mermaid|json [--out file]\n"
+              << "  axr diff <base> <cur> [--config config.yaml] [--root dir]\n"
+              << "  axr prune --days N [--apply] [--root dir]\n"
               << "  axr replay <run目录|events.jsonl> [--format mermaid|json|text] [--out file]\n"
               << "  axr selftest [--fixtures <dir>]\n"
-              << "  axr export | diff | prune | list   （阶段 4 实现）\n"
               << "  axr version\n";
-}
-
-const char* notYetStaged(const std::string& cmd) {
-    if (cmd == "diff" || cmd == "prune" || cmd == "list" || cmd == "export") return "阶段 4（M4：工程化）";
-    return "";
 }
 
 } // namespace
@@ -63,15 +61,14 @@ int runCli(int argc, char** argv) {
     if (cmd == "run") return cmdRun(rest);
     if (cmd == "show") return cmdShow(rest);
     if (cmd == "report") return cmdReport(rest);
+    if (cmd == "list") return cmdList(rest);
+    if (cmd == "export") return cmdExport(rest);
+    if (cmd == "diff") return cmdDiff(rest);
+    if (cmd == "prune") return cmdPrune(rest);
 
-    const char* stage = notYetStaged(cmd);
-    if (!stage[0]) {
-        std::cerr << "未知命令: " << cmd << "\n\n";
-        printUsage();
-        return 2;
-    }
-    std::cout << "命令 " << cmd << " 尚未实现（计划在 " << stage << "）\n";
-    return 3;
+    std::cerr << "未知命令: " << cmd << "\n\n";
+    printUsage();
+    return 2;
 }
 
 } // namespace axr

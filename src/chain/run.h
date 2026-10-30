@@ -24,4 +24,7 @@ struct ChainResult {
 
 ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts = ChainOptions{});
 
+// 主 run：步数最多的那条（并列取最早）；用于 report / export / diff
+const Run* primaryRun(const ChainResult& cr);
+
 } // namespace axr

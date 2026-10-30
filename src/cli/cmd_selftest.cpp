@@ -1,5 +1,6 @@
 #include "cli/cli.h"
 
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <functional>
@@ -14,6 +15,7 @@
 #include "common/log.h"
 #include "config/config.h"
 #include "cost/pricing.h"
+#include "diff/rundiff.h"
 #include "graph/mermaid.h"
 #include "proxy/event.h"
 #include "proxy/recorder.h"
@@ -21,6 +23,7 @@
 #include "proxy/route.h"
 #include "store/events_reader.h"
 #include "store/run_dir.h"
+#include "store/run_index.h"
 #include "ui/report.h"
 
 namespace axr {
@@ -346,6 +349,110 @@ pricing:
     }
 }
 
+// M4 单元：run 差异 / run 目录索引 / 建链性能
+void testM4Units(TestCtx& t, const std::string& fixturesDir) {
+    // ---- diff：新增 Step + T3 参数变化 ----
+    {
+        auto makeStep = [](int i, bool finalStep, const std::string& city) {
+            Step s;
+            s.index = i;
+            s.call.model = "deepseek-chat";
+            s.tokens = 100;
+            s.kind = finalStep ? "final" : "llm";
+            s.response.usage = Usage{100, 10, 0};
+            if (!finalStep) {
+                ToolExec te;
+                te.callId = "call_" + std::to_string(i + 1);
+                te.name = "get_weather";
+                te.arguments = "{\"city\":\"" + city + "\",\"day\":" + std::to_string(i + 1) + "}";
+                te.result = city == "上海" ? "多云" : "晴";
+                s.tools.push_back(te);
+            }
+            return s;
+        };
+
+        Run base, cur;
+        for (int i = 0; i < 5; ++i) base.steps.push_back(makeStep(i, i == 4, "北京"));
+        for (int i = 0; i < 6; ++i) cur.steps.push_back(makeStep(i, i == 5, i == 3 ? "上海" : "北京"));
+        base.total = Usage{500, 50, 0};
+        cur.total = Usage{650, 60, 0};
+
+        const RunDiff d = diffRuns(base, cur, defaultConfig().pricing);
+        t.check(!d.empty(), "M4 diff 检测到差异");
+        t.check(d.steps.size() == 3, "M4 diff 报出 S3 变化 + S4 变化（final→tool）+ 新增 S5");
+        if (!d.steps.empty()) {
+            bool hasAdded = false, hasChanged = false;
+            for (const auto& s : d.steps) {
+                if (s.index == 5 && s.change == "added") hasAdded = true;
+                if (s.index == 3 && s.change == "changed") hasChanged = true;
+            }
+            t.check(hasAdded, "M4 diff 报出新增 S5");
+            t.check(hasChanged, "M4 diff 报出 S3 变化");
+        }
+        bool argChanged = false;
+        for (const auto& td : d.tools)
+            if (td.toolIndex == 3 && td.change == "arguments") argChanged = true;
+        t.check(argChanged, "M4 diff 报出 T3 参数变化");
+        t.check(d.baseSteps == 5 && d.curSteps == 6, "M4 diff 步骤数");
+        t.check(d.curTokens > d.baseTokens, "M4 diff token 增量");
+    }
+
+    // ---- run 目录索引：meta.json 解析 + mtime 年龄 + dry-run / apply ----
+    {
+        using namespace std::filesystem;
+        const path tmp = temp_directory_path() / ("axr-m4-" + makeSessionId());
+        const path runs = tmp / "runs";
+        const path oldRun = runs / "20261001-090000-aaaa";
+        const path newRun = runs / "20261030-090000-bbbb";
+        create_directories(oldRun);
+        create_directories(newRun);
+        writeTextFile((oldRun / "meta.json").string(),
+                      R"({"id":"20261001-090000-aaaa","started_at":"2026-10-01T09:00:00.000+08:00","status":"complete","step_count":4,"tool_count":3,"total_tokens":312,"cost_usd":0.000054,"cost_known":true,"models":["deepseek-chat"]})");
+        // newRun 故意不写 meta.json，走目录名推导
+        last_write_time(oldRun, file_time_type::clock::now() - std::chrono::hours(24 * 10));
+
+        auto listed = listRuns(tmp.string());
+        t.check(listed.ok(), "M4 listRuns 可读目录");
+        if (listed.ok()) {
+            t.check(listed.value.size() == 2, "M4 listRuns 返回 2 个 run");
+            const RunMeta* oldMeta = nullptr;
+            for (const auto& m : listed.value)
+                if (m.dirName == "20261001-090000-aaaa") oldMeta = &m;
+            t.check(oldMeta != nullptr && oldMeta->hasMeta && oldMeta->stepCount == 4 &&
+                        std::abs(oldMeta->costUsd - 0.000054) < 1e-9,
+                    "M4 listRuns 解析 meta.json");
+            t.check(oldMeta != nullptr && std::abs(oldMeta->ageDays - 10.0) < 1.0, "M4 listRuns 按 mtime 算年龄");
+            bool derived = false;
+            for (const auto& m : listed.value)
+                if (m.dirName == "20261030-090000-bbbb") derived = !m.hasMeta && m.startedAt == "2026-10-30 09:00:00";
+            t.check(derived, "M4 无 meta 时从目录名推导时间");
+        }
+
+        auto dry = pruneRuns(tmp.string(), 7, false);
+        t.check(dry.ok() && dry.value.candidates.size() == 1 && dry.value.removed == 0,
+                "M4 prune 默认 dry-run 只列出");
+        auto applied = pruneRuns(tmp.string(), 7, true);
+        t.check(applied.ok() && applied.value.removed == 1, "M4 prune --apply 删除旧 run");
+        t.check(!exists(oldRun), "M4 prune 后旧目录已删除");
+        t.check(exists(newRun), "M4 prune 不删未到期的 run");
+        remove_all(tmp);
+    }
+
+    // ---- 时间推导 ----
+    t.check(timeFromDirName("20261030-143012-a1b2") == "2026-10-30 14:30:12", "M4 目录名转时间");
+    t.check(timeFromDirName("bad-name").empty(), "M4 非法目录名不推导");
+
+    // ---- 性能：50 步链的建链耗时 < 100ms（§10 M4）----
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        auto chain = buildChainFromEvents(fixturesDir + "/t12_long_chain");
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        t.check(chain.ok(), "M4 bench 长链可建链");
+        t.check(ms < 100.0, "M4 50 步建链 < 100ms（实际 " + std::to_string(ms) + " ms）");
+        std::cout << "  bench: t12_long_chain 建链 " << ms << " ms\n";
+    }
+}
+
 } // namespace
 
 int cmdSelftest(const std::vector<std::string>& args) {
@@ -357,6 +464,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     testModelRoundtrip(t);
     testM2Units(t);
     testM3Units(t);
+    testM4Units(t, dir);
 
     // T1 普通对话
     testFixture(dir, "t1_simple", t, [&](const ChainResult& cr) {
@@ -524,6 +632,33 @@ int cmdSelftest(const std::vector<std::string>& args) {
                     "M3 报告含成本表与合计");
         } else {
             t.check(false, "M3 报告夹具加载失败");
+        }
+    }
+
+    // M4 diff fixture：base 5 步 / cur 6 步，且 T3 参数与结果不同
+    {
+        auto baseChain = buildChainFromEvents(dir + "/t13_diff_base");
+        auto curChain = buildChainFromEvents(dir + "/t13_diff_cur");
+        if (baseChain.ok() && curChain.ok() && primaryRun(baseChain.value) && primaryRun(curChain.value)) {
+            const RunDiff d = diffRuns(*primaryRun(baseChain.value), *primaryRun(curChain.value),
+                                       defaultConfig().pricing);
+            t.check(d.baseSteps == 5 && d.curSteps == 6, "M4 diff fixture 5 步 → 6 步");
+            bool added5 = false, changed3 = false;
+            for (const auto& s : d.steps) {
+                if (s.index == 5 && s.change == "added") added5 = true;
+                if (s.index == 3 && s.change == "changed") changed3 = true;
+            }
+            t.check(added5, "M4 diff fixture 新增 S5");
+            t.check(changed3, "M4 diff fixture S3 变化");
+            bool args3 = false, result3 = false;
+            for (const auto& td : d.tools) {
+                if (td.toolIndex == 3 && td.change == "arguments") args3 = true;
+                if (td.toolIndex == 3 && td.change == "result") result3 = true;
+            }
+            t.check(args3, "M4 diff fixture T3 参数变化");
+            t.check(result3, "M4 diff fixture T3 结果变化");
+        } else {
+            t.check(false, "M4 diff fixture 加载失败");
         }
     }
 

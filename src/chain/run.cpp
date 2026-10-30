@@ -162,4 +162,12 @@ ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts) {
     return result;
 }
 
+const Run* primaryRun(const ChainResult& cr) {
+    if (cr.runs.empty()) return nullptr;
+    const Run* best = &cr.runs.front();
+    for (const auto& r : cr.runs)
+        if (r.steps.size() >= best->steps.size()) best = &r;
+    return best;
+}
+
 } // namespace axr
