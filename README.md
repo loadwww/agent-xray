@@ -39,7 +39,6 @@ build\axr.exe replay tests\fixtures\t2_single_tool --format json
 # M2：真流量接入
 build\axr.exe serve --config config.yaml                        # 前台代理，Ctrl+C 结束并落盘
 build\axr.exe run -- python my_agent.py                         # 起代理 + 跑子进程 + 自动收尾
-build\axr.exe run --stream -- python my_agent.py                # 同上（录制 SSE 逐 chunk）
 build\axr.exe run --config tests\proxy_test.yaml -- python tests\fake_agent.py
 
 # M3：分析质量
