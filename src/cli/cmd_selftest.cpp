@@ -11,6 +11,8 @@
 #include "chain/fuzzy.h"
 #include "chain/link.h"
 #include "chain/run.h"
+#include "chain/superstep.h"
+#include "chain/validate.h"
 #include "common/hash.h"
 #include "common/log.h"
 #include "config/config.h"
@@ -251,6 +253,8 @@ storage:
         const std::string id = makeSessionId();
         t.check(id.size() == 20 && id[8] == '-' && id[15] == '-', "M2 会话 id 格式");
         t.check(expandHome("~/.xray") != "~/.xray", "M2 ~ 展开为真实目录");
+        t.check(expandHome("~/.xray").find(".xra/") == std::string::npos, "M2 ~/.xray 展开未把 .xray 截断");
+        t.check(expandHome("~/logs") == expandHome("~") + "/logs", "M2 ~ 展开拼接一致");
     }
 }
 
@@ -436,6 +440,36 @@ void testM4Units(TestCtx& t, const std::string& fixturesDir) {
         t.check(!exists(oldRun), "M4 prune 后旧目录已删除");
         t.check(exists(newRun), "M4 prune 不删未到期的 run");
         remove_all(tmp);
+    }
+
+    // ---- 真实 agent 兼容：文本回填 / 终止型工具 ----
+    {
+        // 响应里有 tool_calls，但下一请求用文本 Observation 回填（smolagents 行为）
+        LLMResponse resp;
+        resp.toolCalls.push_back(ToolCall{"call_1", "get_weather", R"({"city":"北京"})"});
+        const Step s = buildStep(0, LLMCall{}, resp, {});
+        t.check(s.tools.size() == 1 && s.tools[0].name == "get_weather", "真实 agent 文本回填仍识别工具调用");
+        t.check(s.tools[0].result.empty() && s.tools[0].approx, "文本回填时工具结果留空、标记推断");
+        t.check(s.kind == "llm", "有真实工具调用时 Step 不是 final");
+
+        // 终止型工具 final_answer：不计入工具，Step 视为 final，末尾不报缺失
+        LLMResponse term;
+        term.toolCalls.push_back(ToolCall{"call_x", "final_answer", R"({"answer":"ok"})"});
+        const Step st = buildStep(0, LLMCall{}, term, {});
+        t.check(st.tools.empty(), "final_answer 不计入工具统计");
+        t.check(st.kind == "final", "final_answer 使 Step 为 final");
+        Run run;
+        run.steps.push_back(st);
+        std::vector<std::string> missing;
+        t.check(validate(run, missing), "末尾 final_answer 不判定为采集缺失");
+
+        // 非终止工具在末尾仍应判缺失
+        LLMResponse normal;
+        normal.toolCalls.push_back(ToolCall{"call_y", "get_weather", "{}"});
+        Run run2;
+        run2.steps.push_back(buildStep(0, LLMCall{}, normal, {}));
+        std::vector<std::string> missing2;
+        t.check(!validate(run2, missing2), "末尾真实工具无后续请求仍判缺失");
     }
 
     // ---- 时间推导 ----

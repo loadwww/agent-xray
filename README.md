@@ -97,11 +97,17 @@ body 中 `sk-...` 形态密钥按正则替换；原始请求照常转发，不�
 
 ```yaml
 pricing:
+  # DeepSeek 官方按峰/谷两档计价，这里取峰值价保守估算（谷值为其 1/2）
+  deepseek-flash:    { input: 0.30, output: 1.20, cached: 0.006 }
+  deepseek-v4-pro:   { input: 1.32, output: 3.96, cached: 0.044 }
   deepseek-chat:     { input: 0.14, output: 0.28 }
   deepseek-reasoner: { input: 0.55, output: 2.20 }
   gpt-4o:            { input: 2.50, output: 10.00 }
   default:           { input: 1.00, output: 3.00 }   # 未列出的模型走这里
 ```
+
+DeepSeek 的 `prompt_cache_hit_tokens` 会写入 `Usage.cachedTokens`，按 `cached` 单价单独计费
+（上例 `$0.000402` 即两步 2176 个缓存命中 token 的实测结果）。
 
 该段一旦出现即整段覆盖内建单价表（未列出的模型回落到 `default`）。
 响应里没有 `usage` 的步骤成本记为 `n/a`，不会被当成 0 计入合计。
@@ -170,6 +176,55 @@ flowchart TD
 
 Total: 4 steps · 312 tokens · $0.000054
 
+## 真实 agent 对照测试（smolagents + DeepSeek）
+
+用 GitHub 上的经典 agent 框架 [huggingface/smolagents](https://github.com/huggingface/smolagents)
+（`ToolCallingAgent` + 真实 `@tool`）跑一次真实任务，验证"零改造、只看流量"的还原能力。
+
+- 代码区：`D:\agents\smolagents-demo\agent.py`；环境区：`D:\env\agents\smolagents-venv`（venv 与代码分离）
+- agent 代码**未为 axr 做任何改动**：只读 `OPENAI_BASE_URL`（由 `axr run` 注入）+ `OPENAI_API_KEY`
+- 任务：用 `count_lines` 分别统计 README.md 与 config.yaml，再比较字符数
+
+```powershell
+$env:OPENAI_API_KEY = "<deepseek key>"
+.\build\axr.exe run -- D:\env\agents\smolagents-venv\Scripts\python.exe D:\agents\smolagents-demo\agent.py
+```
+
+实测结果（`20261030-191815-79c7`）：`2 steps · 2 tools · 2851 tokens · $0.000402`，`status=complete`。
+
+```mermaid
+flowchart TD
+    S0["① deepseek-flash · 1319 tok<br/>tool_calls: count_lines, count_lines"]
+    S1["② deepseek-flash · 1532 tok<br/>tool_calls: final_answer"]
+    S0 --> S1
+    T0_0{"tool: count_lines<br/>{\"path\": \"D:\\agent-xray\\README.md\"}"}
+    S0 --> T0_0
+    T0_0 --> S1
+    T0_1{"tool: count_lines<br/>{\"path\": \"D:\\agent-xray\\config.yaml\"}"}
+    S0 --> T0_1
+    T0_1 --> S1
+```
+
+| Step | Model | Prompt | Completion | Cost | 占比 |
+|---|---|---|---|---|---|
+| 1 | deepseek-flash | 1231（缓存 1024） | 88 | $0.000174 | 43% |
+| 2 | deepseek-flash | 1413（缓存 1152） | 119 | $0.000228 | 56% |
+
+Total: 2 steps · 2851 tokens · $0.000402
+
+真实流量暴露并修复的三个兼容问题：
+
+- **`~` 展开截断**：`expandHome` 误删 `.xray` 的末字符，run 目录变成 `C:\Users\欧阳晨\.xra/.xray/runs/...`；
+  已改为完整剥离 `.xray` 后缀，selftest 增加"展开结果不含 `.xra/`"与"拼接一致"两条断言。
+- **文本回填的工具结果**：smolagents 把工具结果以 `Observation:` 文本塞进下一条消息，协议层没有 `tool` 角色，
+  因此"下一条请求新增的 tool 消息"为 0。`buildStep` 现在会把**本次响应声明的 tool_calls** 补成工具条目
+  （`approx=true`、结果留空），保证 `tools` 计数与图上扇出不为 0。
+- **终止工具**：smolagents 用 `final_answer` 这个"工具"交付答案，它没有后续请求。新增 `isTerminalTool`
+  把它从工具表与 `kind` 判定中排除（`kind=final`），`validate` 也不再把它末步判为"采集不完整"。
+
+已知局限（纯流量视角的固有缺口）：文本回填的工具**结果内容**落在下一条消息的正文字里，
+目前不会回填到工具表（报告里结果摘要显示 `-`）；若接入 MCP 代理或上游使用标准 `tool` 消息，可完整还原。
+
 ## 与设计文档的偏离
 
 | 项 | 设计文档 | 实现 | 原因 |
@@ -179,6 +234,8 @@ Total: 4 steps · 312 tokens · $0.000054
 | SSE 客户端体验 | 流式透传 | M2 采用 S1 非流式缓冲：上游逐 chunk 录制，响应聚合成完整包返回客户端 | 设计文档 §7.1.4 建议 M2 先用 S1；录制保真度不受影响 |
 | "步骤数少于请求数"验收 | 未指定减量来源 | 以"重试请求不进 Step"实现：`tests/fixtures/t12_long_chain` 51 请求 / 50 步 | 常规 agent 每请求即一步，须有明确合法减量机制才可验证 |
 | diff 对齐口径 | 未定义 | 按 Step 序号对齐（工具全局编号 T0、T1…） | 无标准答案，序号对齐可稳定复现"新增 S5 / T3 参数变化"验收 |
+| 工具结果来源 | 仅从新增 `tool` 消息还原（§7.3.3） | 额外把响应 `tool_calls` 补成工具条目（结果留空） | smolagents 等框架以文本 `Observation:` 回填，协议层无 tool 消息，不补则工具数为 0 |
+| 终止工具 | 未定义 | `final_answer` 等终止工具不计工具、不做完整性告警 | agent 用"工具调用"交付最终答案，本身无后续请求 |
 
 ## 状态
 
@@ -187,3 +244,4 @@ Total: 4 steps · 312 tokens · $0.000054
 - [x] 阶段 2（M2）：真流量接入（反向代理 + 录制 + `axr run`）
 - [x] 阶段 3（M3）：分析质量（superstep / fuzzy / validate / cost / report）
 - [x] 阶段 4（M4）：工程化（diff / prune / list / export / 性能 / 单文件打包）
+- [x] 阶段 5：真实 agent 对照（smolagents + DeepSeek 真流量，2 步 / 2 工具 / complete）

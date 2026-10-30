@@ -174,14 +174,13 @@ std::string expandHome(const std::string& path) {
     if (path[0] == '~') {
         std::string rest = path.substr(1);
         if (!rest.empty() && (rest[0] == '/' || rest[0] == '\\')) rest = rest.substr(1);
-        const std::string home = defaultStorageRoot();
-        // defaultStorageRoot 已带 /.xray，这里只需要其父目录
-        std::string base = home;
-        if (base.size() > 5 && base.compare(base.size() - 5, 5, ".xray") == 0) {
-            base.pop_back(); // '/'
-#ifdef _WIN32
-            if (!base.empty() && base.back() == '\\') base.pop_back();
-#endif
+        const std::string root = defaultStorageRoot();
+        // defaultStorageRoot 形如 <home>/.xray，这里去掉末尾 "/.xray" 得到 home
+        std::string base = root;
+        const std::string suffix = ".xray";
+        if (base.size() > suffix.size() && base.compare(base.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            base.resize(base.size() - suffix.size());
+            if (!base.empty() && (base.back() == '/' || base.back() == '\\')) base.pop_back();
         }
         return rest.empty() ? base : base + "/" + rest;
     }
@@ -196,6 +195,9 @@ Config defaultConfig() {
     };
     cfg.storage.root = defaultStorageRoot();
     // §7.5 单价表（USD / 1M tokens），用户可在 config.yaml 覆盖
+    // DeepSeek 峰/谷两档，这里取峰值价保守估算（谷值为其 1/2）
+    cfg.pricing.models["deepseek-flash"] = ModelPrice{0.30, 1.20, 0.006};
+    cfg.pricing.models["deepseek-v4-pro"] = ModelPrice{1.32, 3.96, 0.044};
     cfg.pricing.models["deepseek-chat"] = ModelPrice{0.14, 0.28, -1.0};
     cfg.pricing.models["deepseek-reasoner"] = ModelPrice{0.55, 2.20, -1.0};
     cfg.pricing.models["gpt-4o"] = ModelPrice{2.50, 10.00, -1.0};

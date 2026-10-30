@@ -1,5 +1,7 @@
 #include "chain/validate.h"
 
+#include "chain/superstep.h"
+
 namespace axr {
 
 bool validate(const Run& r, std::vector<std::string>& missing) {
@@ -23,8 +25,12 @@ bool validate(const Run& r, std::vector<std::string>& missing) {
     }
 
     // 最后一步若仍要求工具但没有后续请求 → 采集不完整（纯流量视角的固有缺口）
+    // 例外：终止型工具（final_answer 等）本身就是交最终答案，不需要后续请求
     if (!r.steps.empty() && !r.steps.back().response.toolCalls.empty()) {
-        missing.push_back("step " + std::to_string(r.steps.size()) + ": 末尾 tool_calls 无后续请求");
+        bool onlyTerminal = true;
+        for (const auto& tc : r.steps.back().response.toolCalls)
+            if (!isTerminalTool(tc.name)) onlyTerminal = false;
+        if (!onlyTerminal) missing.push_back("step " + std::to_string(r.steps.size()) + ": 末尾 tool_calls 无后续请求");
     }
 
     return missing.empty();
