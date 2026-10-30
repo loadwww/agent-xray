@@ -26,8 +26,13 @@ struct ForwardResponse {
 
 // onChunk 在收到每段数据时回调（用于录 sse_chunk）；可为空
 using ChunkSink = std::function<void(const std::string& chunk)>;
+// 收到响应头时回调（真流式转发要提前拿到 status / content-type）；可为空
+using HeaderSink = std::function<void(int status, const std::string& contentType)>;
+// 返回 true 表示客户端已断开，应尽快中断上游读取；可为空
+using AbortCheck = std::function<bool()>;
 
-ForwardResponse forwardHttp(const ForwardRequest& req, const ChunkSink& onChunk);
+ForwardResponse forwardHttp(const ForwardRequest& req, const ChunkSink& onChunk,
+                            const HeaderSink& onHeaders = nullptr, const AbortCheck& abortCheck = nullptr);
 
 // 判断上游 URL 是否为 https
 bool isHttpsUrl(const std::string& url);

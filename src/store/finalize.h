@@ -24,8 +24,10 @@ struct RunSummary {
     std::string primaryModel;
     std::string status; // complete | incomplete | empty
     long long droppedEvents = 0;
+    int rewrittenRequests = 0; // inject_usage 改写过的请求数（§7.2.3，meta 记 rewritten）
 };
 
-RunSummary finalizeRun(const std::string& runDir, const Config& cfg, long long droppedEvents);
+RunSummary finalizeRun(const std::string& runDir, const Config& cfg, long long droppedEvents,
+                       int rewrittenRequests = 0);
 
 } // namespace axr

@@ -96,7 +96,8 @@ bool isHttpsUrl(const std::string& url) {
     return lower(url).rfind("https://", 0) == 0;
 }
 
-ForwardResponse forwardHttp(const ForwardRequest& req, const ChunkSink& onChunk) {
+ForwardResponse forwardHttp(const ForwardRequest& req, const ChunkSink& onChunk, const HeaderSink& onHeaders,
+                            const AbortCheck& abortCheck) {
     ForwardResponse out;
 #ifdef _WIN32
     UrlParts parts;
@@ -174,6 +175,9 @@ ForwardResponse forwardHttp(const ForwardRequest& req, const ChunkSink& onChunk)
         out.contentType = fromWide(std::wstring(ctypeBuf, ctypeBuf + wcslen(ctypeBuf)));
     }
 
+    // 头先给出去：真流式转发据此提前设置客户端响应状态与 content-type
+    if (onHeaders) onHeaders(out.status, out.contentType);
+
     std::string buf(8192, '\0');
     DWORD read = 0;
     while (true) {
@@ -186,6 +190,7 @@ ForwardResponse forwardHttp(const ForwardRequest& req, const ChunkSink& onChunk)
         const std::string chunk = buf.substr(0, read);
         out.body += chunk;
         if (onChunk) onChunk(chunk);
+        if (abortCheck && abortCheck()) break; // 客户端已断开：停止读上游
     }
 
     out.latencyMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();

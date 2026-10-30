@@ -2,6 +2,7 @@
 proxy:
   bind: 127.0.0.1
   listen: 8081
+  max_body_bytes: 4096   # T10：超过该值的请求体应被拒绝（413）
   upstreams:
     - match: "/v1"
       url: "http://127.0.0.1:9099/v1"

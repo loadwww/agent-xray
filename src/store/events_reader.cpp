@@ -119,7 +119,6 @@ Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events)
             p.pair.resp.streamed = true;
             p.hasResp = true;
         } else if (e.kind == "resp") {
-            p.pair.resp.latencyMs = e.latencyMs;
             if (!p.stream) {
                 if (!e.respBody.empty()) {
                     nlohmann::json body;
@@ -143,6 +142,8 @@ Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events)
             }
             if (e.status >= 400 && p.pair.resp.err.empty())
                 p.pair.resp.err = "upstream status " + std::to_string(e.status);
+            // 延迟放在最后写：上面解析 resp_body 会整体覆盖结构体（曾因此丢掉 latency_ms）
+            p.pair.resp.latencyMs = e.latencyMs;
             p.hasResp = true;
         } else if (e.kind == "err") {
             p.pair.resp.err = e.err.empty() ? "upstream error" : e.err;

@@ -20,6 +20,7 @@
 #include "diff/rundiff.h"
 #include "graph/mermaid.h"
 #include "proxy/event.h"
+#include "proxy/inject.h"
 #include "proxy/recorder.h"
 #include "proxy/redact.h"
 #include "proxy/route.h"
@@ -163,6 +164,22 @@ storage:
             t.check(cfg.value.redact.patterns.size() == 1, "M2 配置 redact.patterns");
             t.check(!cfg.value.storage.root.empty() && cfg.value.storage.root != "~/.xray", "M2 配置 ~ 展开");
         }
+    }
+
+    // §7.2.3 inject_usage：配置开关 + 流式请求体改写
+    {
+        auto cfg = parseConfigText("proxy:\n  inject_usage: true\n");
+        t.check(cfg.ok() && cfg.value.proxy.injectUsage, "M2 inject_usage 配置解析");
+
+        std::string s = R"({"model":"m","stream":true})";
+        t.check(injectStreamUsage(s) && s.find("\"include_usage\":true") != std::string::npos,
+                "M2 流式请求补 include_usage");
+        std::string ns = R"({"model":"m","stream":false})";
+        t.check(!injectStreamUsage(ns) && ns == R"({"model":"m","stream":false})", "M2 非流式请求不改写");
+        std::string has = R"({"stream":true,"stream_options":{"include_usage":true}})";
+        t.check(!injectStreamUsage(has), "M2 已带 include_usage 不重复改写");
+        std::string bad = "not json";
+        t.check(!injectStreamUsage(bad) && bad == "not json", "M2 非 JSON 原样转发");
     }
 
     // 上游路由：最长前缀 + 剥离 match 前缀
@@ -525,6 +542,8 @@ int cmdSelftest(const std::vector<std::string>& args) {
         t.check(r.steps[0].call.tools.size() == 1, "T2 请求里的 tool 定义被解析");
         t.check(r.steps[1].kind == "final", "T2 第二步是 final");
         t.check(r.steps[1].tokens == 95, "T2 第二步 token 数");
+        // resp_body 解析曾把整个结构体覆盖，导致 latency_ms 丢失（时间线恒为 0.0s）
+        t.check(r.steps[1].response.latencyMs == 1200, "T2 步骤耗时保留 resp 事件的 latency_ms");
     });
 
     // T3 并行工具

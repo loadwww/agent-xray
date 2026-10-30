@@ -46,8 +46,30 @@ def main():
     print("[agent] base =", BASE)
 
     if "--stream" in sys.argv:
-        raw = post([{"role": "user", "content": "北京天气"}], stream=True)
-        print("[agent] sse bytes =", len(raw))
+        payload = json.dumps({
+            "model": "deepseek-chat",
+            "messages": [{"role": "user", "content": "北京天气"}],
+            "tools": TOOLS,
+            "stream": True,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            BASE + "/chat/completions",
+            data=payload,
+            headers={"Content-Type": "application/json", "Authorization": "Bearer " + API_KEY},
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            te = resp.headers.get("Transfer-Encoding", "-")
+            chunks = 0
+            total = 0
+            while True:
+                piece = resp.read(200)
+                if not piece:
+                    break
+                chunks += 1
+                total += len(piece)
+        # 代理 S2 边收边发时是 chunked；S1 缓冲实现会是定长
+        print("[agent] transfer-encoding =", te)
+        print("[agent] sse bytes =", total, "chunks =", chunks)
         return 0
 
     messages = [{"role": "user", "content": "帮我查一下北京今天天气"}]

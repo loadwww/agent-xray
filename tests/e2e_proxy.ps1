@@ -82,9 +82,11 @@ try {
     Check ($LASTEXITCODE -eq 0) "replay 退出码 0"
     Check (($replayOut -join "`n") -match "Run: ") "replay 打印出 run"
 
-    Write-Host "[3] axr run：流式（SSE 逐 chunk 录制）"
-    & $axr run --config $cfg --root $runsRoot -- python $agent --stream
+    Write-Host "[3] axr run：流式（S2 边收边发 + 逐 chunk 录制）"
+    $streamOut = & $axr run --config $cfg --root $runsRoot -- python $agent --stream 2>&1 | Out-String
     Check ($LASTEXITCODE -eq 0) "流式 axr run 退出码 0"
+    Check ($streamOut -match "transfer-encoding = chunked") "S2 流式响应为 chunked（不是缓冲后一次性返回）"
+    Check ($streamOut -match "sse bytes = (\d+)") "客户端收到 SSE 数据"
     $run2 = NewestRun
     $events2 = Join-Path $run2.FullName "events.jsonl"
     Check ((CountKind $events2 "sse_chunk") -ge 1) "流式录制包含 sse_chunk"
@@ -115,6 +117,27 @@ try {
             -ContentType "application/json" -TimeoutSec 10 -UseBasicParsing
         Check ($resp.StatusCode -eq 200) "serve 转发到上游返回 200（实际 $($resp.StatusCode)）"
 
+        # T10：超过 max_body_bytes（4096）→ 413，拒绝且不 OOM
+        $pad = 'x' * 8000
+        $big = '{"model":"deepseek-chat","messages":[{"role":"user","content":"' + ($pad -join '') + '"}]}'
+        try {
+            Invoke-WebRequest -Uri "http://127.0.0.1:8082/v1/chat/completions" -Method POST `
+                -Body $big -ContentType "application/json" -TimeoutSec 20 -UseBasicParsing | Out-Null
+            $status = 200
+        } catch { $status = [int]$_.Exception.Response.StatusCode }
+        Check ($status -eq 413) "T10 超大 body 被拒绝（413，实际 $status）"
+
+        # T11：上游 500 → 代理透传 500（事件流里另记 err）
+        Invoke-WebRequest -Uri "http://127.0.0.1:9099/__mode/fail" -TimeoutSec 5 -UseBasicParsing | Out-Null
+        try {
+            Invoke-WebRequest -Uri "http://127.0.0.1:8082/v1/chat/completions" -Method POST `
+                -Body '{"model":"deepseek-chat","messages":[{"role":"user","content":"hi"}]}' `
+                -ContentType "application/json" -TimeoutSec 10 -UseBasicParsing | Out-Null
+            $status = 200
+        } catch { $status = [int]$_.Exception.Response.StatusCode }
+        Check ($status -eq 500) "T11 上游 500 原样透传（实际 $status）"
+        Invoke-WebRequest -Uri "http://127.0.0.1:9099/__mode/ok" -TimeoutSec 5 -UseBasicParsing | Out-Null
+
         try {
             Invoke-WebRequest -Uri "http://127.0.0.1:8082/nope" -Method POST -Body "{}" -TimeoutSec 5 -UseBasicParsing | Out-Null
             $status = 200
@@ -123,6 +146,17 @@ try {
     }
     if (!$serve.HasExited) { Stop-Process -Id $serve.Id -Force }
     Check (Test-Path (Join-Path $serveRoot "runs")) "serve 也创建了会话目录"
+
+    Start-Sleep -Milliseconds 400
+    $serveRun = Get-ChildItem (Join-Path $serveRoot "runs") -Directory | Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if ($serveRun) {
+        $serveEvents = Get-Content (Join-Path $serveRun.FullName "events.jsonl") -Raw
+        Check ($serveEvents -match '"kind":"err"') "T11 事件流里记录了 err"
+        Check ($serveEvents -match '"status":500') "T11 事件里保留了上游 500"
+    } else {
+        Check $false "serve 未生成 run 目录"
+    }
 }
 finally {
     if ($mock -and !$mock.HasExited) { Stop-Process -Id $mock.Id -Force }

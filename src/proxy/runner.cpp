@@ -167,7 +167,7 @@ Result<RunSummary> runTarget(const Config& cfg, const std::vector<std::string>& 
     rec.flush();
     const long long dropped = rec.dropped();
     // rec 析构前完成 finalize，确保 events.jsonl 已落盘
-    RunSummary summary = finalizeRun(runDir, cfg, dropped);
+    RunSummary summary = finalizeRun(runDir, cfg, dropped, source.rewrittenRequests());
     return Result<RunSummary>::Ok(summary);
 }
 

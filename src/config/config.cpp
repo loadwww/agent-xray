@@ -141,6 +141,7 @@ void applyScalar(Config& cfg, const std::string& section, const std::string& key
         else if (key == "max_body_bytes") cfg.proxy.maxBodyBytes = toLL(v, cfg.proxy.maxBodyBytes);
         else if (key == "max_run_bytes") cfg.proxy.maxRunBytes = toLL(v, cfg.proxy.maxRunBytes);
         else if (key == "max_queue") cfg.proxy.maxQueue = toInt(v, cfg.proxy.maxQueue);
+        else if (key == "inject_usage") cfg.proxy.injectUsage = toBool(v, cfg.proxy.injectUsage);
     } else if (section == "chain") {
         if (key == "run_gap_minutes") cfg.chain.runGapMinutes = toInt(v, cfg.chain.runGapMinutes);
         else if (key == "fuzzy_threshold") cfg.chain.fuzzyThreshold = toDouble(v, cfg.chain.fuzzyThreshold);

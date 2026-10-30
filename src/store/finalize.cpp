@@ -47,15 +47,18 @@ void writeMeta(const std::string& runDir, const RunSummary& s, const Run* run, l
     m["incomplete"] = s.incomplete;
     m["report"] = s.reportPath;
     if (s.droppedEvents > 0) m["dropped_events"] = s.droppedEvents;
+    if (s.rewrittenRequests > 0) m["rewritten"] = true;
     writeTextFile(joinPath(runDir, "meta.json"), m.dump(2));
 }
 
 } // namespace
 
-RunSummary finalizeRun(const std::string& runDir, const Config& cfg, long long droppedEvents) {
+RunSummary finalizeRun(const std::string& runDir, const Config& cfg, long long droppedEvents,
+                       int rewrittenRequests) {
     RunSummary s;
     s.runDir = runDir;
     s.droppedEvents = droppedEvents;
+    s.rewrittenRequests = rewrittenRequests;
     s.sessionId = std::filesystem::path(runDir).filename().string();
 
     const std::string eventsPath = joinPath(runDir, "events.jsonl");

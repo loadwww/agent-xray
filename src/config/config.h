@@ -35,6 +35,7 @@ struct Config {
         long long maxBodyBytes = 8LL * 1024 * 1024;
         long long maxRunBytes = 256LL * 1024 * 1024;
         int maxQueue = 10000;
+        bool injectUsage = false; // 流式请求自动补 stream_options.include_usage（§7.2.3）
         std::vector<UpstreamDef> upstreams;
     } proxy;
 

@@ -32,7 +32,7 @@ powershell -ExecutionPolicy Bypass -File tests\e2e_proxy.ps1
 
 ```powershell
 # M1：离线回放与自检
-build\axr.exe selftest                                  # 136 条断言：hash / model / SSE / 链 / fuzzy / 配置 / 路由 / 脱敏 / 录制 / 成本 / 报告 / diff / prune
+build\axr.exe selftest                                  # 151 条断言：hash / model / SSE / 链 / fuzzy / 配置 / 路由 / 脱敏 / 录制 / 成本 / 报告 / diff / prune
 build\axr.exe replay tests\fixtures\deepseek_tool_2 --format mermaid --out build\graph.mmd
 build\axr.exe replay tests\fixtures\t2_single_tool --format json
 
@@ -87,6 +87,23 @@ proxy:
 
 落盘副本自动脱敏：`authorization` / `x-api-key` / `api-key` 头置为 `***`，
 body 中 `sk-...` 形态密钥按正则替换；原始请求照常转发，不影响上游鉴权。
+
+流式请求（`"stream": true`）走 **S2 真流式**（设计文档 §7.1.4）：上游在 worker 线程读取，
+客户端由 `chunked` 内容提供者边收边写，不缓冲整体响应；队列满时对上游施压（背压），
+客户端断开则中断上游读取。非流式请求照旧一次性缓冲。
+
+### 补全流式 usage（`inject_usage`）
+
+OpenAI 协议下流式响应默认不带 `usage`，这样每步 token / 成本都算不出来。可选开启改写：
+
+```yaml
+proxy:
+  inject_usage: true    # 默认 false，只改写流式请求
+```
+
+开启后，仅对 `stream: true` 的请求补 `stream_options.include_usage = true`
+（已带该字段时不动），被改写的请求数写入 `meta.json` 的 `"rewritten": true` 与
+`axr run` 结束日志；请求体落盘记录的是改写后的版本。
 
 ## M3 分析质量
 
@@ -231,11 +248,22 @@ Total: 2 steps · 2851 tokens · $0.000402
 | --- | --- | --- | --- |
 | HTTP 转发库 | libcurl（§7.1.3） | WinHTTP（`winhttp.lib`） | 本机无 libcurl 开发包/OpenSSL；WinHTTP 走系统 Schannel，零第三方依赖 |
 | 路由拼接 | 示例间语义冲突 | 统一为"剥离 match 前缀 + url 作为上游基址" | 使 deepseek 与 ollama 两种上游同时可用 |
-| SSE 客户端体验 | 流式透传 | M2 采用 S1 非流式缓冲：上游逐 chunk 录制，响应聚合成完整包返回客户端 | 设计文档 §7.1.4 建议 M2 先用 S1；录制保真度不受影响 |
+| SSE 客户端体验 | 流式透传（S1 先做、S2 真流式） | 已实现 S2：worker 线程读上游 + `chunked` 边收边写（背压 64 段、客户端断开即中断上游） | 设计文档 §7.1.4；S2 才是真实 agent 的默认形态 |
 | "步骤数少于请求数"验收 | 未指定减量来源 | 以"重试请求不进 Step"实现：`tests/fixtures/t12_long_chain` 51 请求 / 50 步 | 常规 agent 每请求即一步，须有明确合法减量机制才可验证 |
 | diff 对齐口径 | 未定义 | 按 Step 序号对齐（工具全局编号 T0、T1…） | 无标准答案，序号对齐可稳定复现"新增 S5 / T3 参数变化"验收 |
 | 工具结果来源 | 仅从新增 `tool` 消息还原（§7.3.3） | 额外把响应 `tool_calls` 补成工具条目（结果留空） | smolagents 等框架以文本 `Observation:` 回填，协议层无 tool 消息，不补则工具数为 0 |
 | 终止工具 | 未定义 | `final_answer` 等终止工具不计工具、不做完整性告警 | agent 用"工具调用"交付最终答案，本身无后续请求 |
+
+## 已知边界（§7.3.7）
+
+- **并行子 agent 的交错链**：归属靠"下一个请求里是否出现某条 tool_result"判断，两个子 agent 并发写同一条
+  messages 序列时仍可能误判。本期策略是把可疑的分支切成独立 run，不展开 run 树。
+- **无状态客户端（每轮全量重发）**：前缀哈希天然更准，是优势场景；反之只追加增量的客户端需要模糊匹配兜底，
+  图中对应边会标注"推测"。
+- **一次 run 内换模型（fallback）**：前缀仍成立，只是各 Step 的 `model` 不同，成本按各步模型分别归因。
+- **工具结果来自文本回填**：如 smolagents 用 `Observation:` 文本回填时，工具结果内容无法回填（详见上一节）。
+- **超大请求体（T10）**：`proxy.max_body_bytes` 超限时由 httplib 在读 body 阶段直接回 413，
+  代理拿不到完整请求，因此**不产生 `req` / `err` 事件**；这是一处刻意的"宁可少记也不占内存"取舍。
 
 ## 状态
 
