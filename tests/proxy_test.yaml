@@ -1,0 +1,22 @@
+# 离线验收配置：上游指向本地 mock_openai（tests/e2e_proxy.ps1 使用）
+proxy:
+  bind: 127.0.0.1
+  listen: 8081
+  upstreams:
+    - match: "/v1"
+      url: "http://127.0.0.1:9099/v1"
+      name: "mock-openai"
+    - match: "/ollama"
+      url: "http://127.0.0.1:9099/v1"
+      name: "mock-ollama"
+
+redact:
+  headers:
+    - authorization
+    - x-api-key
+    - api-key
+  patterns:
+    - "sk-[A-Za-z0-9]{20,}"
+
+storage:
+  root: "build/e2e-runs"

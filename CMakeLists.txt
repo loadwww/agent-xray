@@ -15,11 +15,12 @@ add_executable(axr ${AXR_SRC})
 # 测试台（M2 起用于真实转发验证；M1 仅保证可编译）
 add_executable(mock_openai ${CMAKE_SOURCE_DIR}/tests/mock_openai.cpp)
 
-# 转发层依赖 libcurl，M2 阶段启用（见设计文档 §2.2）
+# 转发层：Windows 内置 WinHTTP（本机无 libcurl 开发包，见设计文档 §7.1.3 说明）
 # find_package(CURL REQUIRED)
 # target_link_libraries(axr PRIVATE CURL::libcurl)
 
 if(MSVC)
+    target_link_libraries(axr PRIVATE winhttp)
     target_compile_options(axr PRIVATE /utf-8 /W3 /permissive-)
     target_compile_options(mock_openai PRIVATE /utf-8 /W3 /permissive-)
 endif()

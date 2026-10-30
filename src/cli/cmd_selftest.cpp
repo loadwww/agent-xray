@@ -1,7 +1,9 @@
 #include "cli/cli.h"
 
+#include <filesystem>
 #include <functional>
 #include <iostream>
+#include <map>
 #include <mutex>
 
 #include "chain/fuzzy.h"
@@ -9,8 +11,14 @@
 #include "chain/run.h"
 #include "common/hash.h"
 #include "common/log.h"
+#include "config/config.h"
 #include "graph/mermaid.h"
+#include "proxy/event.h"
+#include "proxy/recorder.h"
+#include "proxy/redact.h"
+#include "proxy/route.h"
 #include "store/events_reader.h"
+#include "store/run_dir.h"
 
 namespace axr {
 namespace {
@@ -113,6 +121,133 @@ void testFixture(const std::string& dir, const std::string& name, TestCtx& t,
     assertions(chain.value);
 }
 
+void testM2Units(TestCtx& t) {
+    // 配置解析：upstreams / chain / redact / storage 覆盖默认值
+    {
+        const std::string yaml = R"(
+proxy:
+  listen: 8081
+  bind: 127.0.0.1
+  max_body_bytes: 1024
+  upstreams:
+    - match: "/v1"
+      url: "http://127.0.0.1:9099/v1"
+      name: "mock"
+chain:
+  run_gap_minutes: 5
+  fuzzy_threshold: 0.85
+redact:
+  headers: [authorization]
+  patterns:
+    - "sk-[A-Za-z0-9]{20,}"
+storage:
+  root: "~/.xray"
+)";
+        auto cfg = parseConfigText(yaml);
+        t.check(cfg.ok(), "M2 配置可解析");
+        if (cfg.ok()) {
+            t.check(cfg.value.proxy.listen == 8081, "M2 配置 listen");
+            t.check(cfg.value.proxy.maxBodyBytes == 1024, "M2 配置 max_body_bytes");
+            t.check(cfg.value.proxy.upstreams.size() == 1, "M2 配置 upstreams 覆盖默认");
+            t.check(cfg.value.proxy.upstreams[0].name == "mock", "M2 配置 upstream name");
+            t.check(cfg.value.chainOptions().runGapMinutes == 5, "M2 配置 chain 生效");
+            t.check(cfg.value.redact.headers.size() == 1, "M2 配置 redact.headers 覆盖默认");
+            t.check(cfg.value.redact.patterns.size() == 1, "M2 配置 redact.patterns");
+            t.check(!cfg.value.storage.root.empty() && cfg.value.storage.root != "~/.xray", "M2 配置 ~ 展开");
+        }
+    }
+
+    // 上游路由：最长前缀 + 剥离 match 前缀
+    {
+        std::vector<UpstreamDef> ups = {
+            {"/v1", "https://api.deepseek.com/v1", "deepseek"},
+            {"/v1/chat", "http://127.0.0.1:11434/v1", "ollama"},
+            {"/ollama", "http://127.0.0.1:11434/v1", "ollama2"},
+        };
+        auto r1 = resolveUpstream("/v1/models", ups);
+        t.check(r1.matched && r1.url == "https://api.deepseek.com/v1/models", "M2 路由 /v1 拼接");
+        auto r2 = resolveUpstream("/v1/chat/completions", ups);
+        t.check(r2.matched && r2.upstreamName == "ollama", "M2 路由取最长前缀");
+        t.check(r2.url == "http://127.0.0.1:11434/v1/completions", "M2 路由剥离前缀");
+        auto r3 = resolveUpstream("/v1beta/models", ups);
+        t.check(!r3.matched, "M2 路由边界检查（/v1beta 不匹配 /v1）");
+        auto r4 = resolveUpstream("/nope", ups);
+        t.check(!r4.matched, "M2 未匹配路径");
+    }
+
+    // 脱敏：头大小写不敏感 + body 正则
+    {
+        std::map<std::string, std::string> h{{"Authorization", "Bearer sk-x"}, {"content-type", "application/json"}};
+        auto out = redactHeaders(h, {"authorization", "x-api-key"});
+        t.check(out["Authorization"] == kRedacted, "M2 authorization 头脱敏");
+        t.check(out["content-type"] == "application/json", "M2 非敏感头保留");
+
+        const std::string body = R"({"api_key":"sk-0123456789abcdefghijklmnopqrstuv"})";
+        const std::string red = redactBody(body, {"sk-[A-Za-z0-9]{20,}"});
+        t.check(red.find("sk-0123") == std::string::npos, "M2 body 中 sk- 密钥被替换");
+        t.check(red.find(kRedacted) != std::string::npos, "M2 body 脱敏占位符");
+    }
+
+    // 事件 JSON：req / resp 字段齐全，不写无关字段
+    {
+        Event e;
+        e.seq = 7;
+        e.ts = "2026-10-30T14:30:12.100+08:00";
+        e.kind = "req";
+        e.hop = "h-1";
+        e.upstream = "https://api.deepseek.com/v1/chat/completions";
+        e.reqBody = "{}";
+        e.reqHeaders = {{"authorization", "***"}};
+        auto j = e.toJson();
+        t.check(j["seq"] == 7 && j["kind"] == "req", "M2 事件基础字段");
+        t.check(j.contains("req_body") && j.contains("req_headers"), "M2 req 事件字段");
+        t.check(!j.contains("data") && !j.contains("status"), "M2 req 事件不写无关字段");
+
+        Event r;
+        r.kind = "resp";
+        r.hop = "h-1";
+        r.status = 200;
+        r.latencyMs = 1200;
+        auto jr = r.toJson();
+        t.check(jr["status"] == 200 && jr["latency_ms"] == 1200, "M2 resp 事件字段");
+    }
+
+    // 录制器：异步落盘可读回、seq 递增
+    {
+        const std::filesystem::path tmp =
+            std::filesystem::temp_directory_path() / ("axr-selftest-" + makeSessionId());
+        std::filesystem::create_directories(tmp);
+        const std::string file = (tmp / "events.jsonl").string();
+        {
+            Recorder rec(file, 1LL << 20, 1000);
+            for (int i = 0; i < 3; ++i) {
+                Event e;
+                e.kind = "req";
+                e.hop = "h-" + std::to_string(i);
+                e.reqBody = "{}";
+                rec.push(e);
+            }
+            rec.flush();
+            t.check(rec.bytes() > 0, "M2 录制器写入非空");
+        }
+        auto events = readEventsFile(file);
+        t.check(events.ok() && events.value.size() == 3, "M2 录制事件可读回 3 条");
+        if (events.ok() && events.value.size() == 3) {
+            t.check(events.value[0].seq == 1 && events.value[2].seq == 3, "M2 事件 seq 递增");
+            t.check(events.value[1].hop == "h-1", "M2 事件顺序保持");
+            t.check(!events.value[0].ts.empty(), "M2 录制器自动补时间戳");
+        }
+        std::filesystem::remove_all(tmp);
+    }
+
+    // 会话 id 形如 YYYYMMDD-HHMMSS-xxxx
+    {
+        const std::string id = makeSessionId();
+        t.check(id.size() == 20 && id[8] == '-' && id[15] == '-', "M2 会话 id 格式");
+        t.check(expandHome("~/.xray") != "~/.xray", "M2 ~ 展开为真实目录");
+    }
+}
+
 } // namespace
 
 int cmdSelftest(const std::vector<std::string>& args) {
@@ -122,6 +257,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
 
     testHash(t);
     testModelRoundtrip(t);
+    testM2Units(t);
 
     // T1 普通对话
     testFixture(dir, "t1_simple", t, [&](const ChainResult& cr) {

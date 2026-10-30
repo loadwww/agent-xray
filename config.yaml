@@ -1,0 +1,37 @@
+# AgentXray 默认配置（§9）
+# 用法: axr run -- <command...>   会优先读取当前目录的 config.yaml
+# 注意: match 是本地虚拟前缀，转发到上游时会被剥掉
+#   例: 收到 /v1/chat/completions + url "https://api.deepseek.com/v1"
+#       -> https://api.deepseek.com/v1/chat/completions
+
+proxy:
+  bind: 127.0.0.1
+  listen: 8080
+  max_body_bytes: 8388608
+  max_run_bytes: 268435456
+  max_queue: 10000
+  upstreams:
+    - match: "/v1"
+      url: "https://api.deepseek.com/v1"
+      name: "deepseek"
+    - match: "/ollama"
+      url: "http://127.0.0.1:11434/v1"
+      name: "ollama"
+
+chain:
+  run_gap_minutes: 30
+  fuzzy_threshold: 0.90
+  fuzzy_window: 20
+
+redact:
+  headers:
+    - authorization
+    - x-api-key
+    - api-key
+  patterns:
+    - "sk-[A-Za-z0-9]{20,}"
+  pii: false
+
+storage:
+  root: "~/.xray"
+  retention_days: 30

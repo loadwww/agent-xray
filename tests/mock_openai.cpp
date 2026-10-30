@@ -108,6 +108,10 @@ int main(int argc, char** argv) {
         g_case = "plain";
         res.set_content("{\"case\":\"plain\"}", "application/json");
     });
+    svr.Get("/__case/deep", [](const httplib::Request&, httplib::Response& res) {
+        g_case = "deep";
+        res.set_content("{\"case\":\"deep\"}", "application/json");
+    });
 
     svr.Post("/v1/chat/completions", [](const httplib::Request& req, httplib::Response& res) {
         if (g_mode == "fail") {
@@ -129,7 +133,8 @@ int main(int argc, char** argv) {
                                          ? body["messages"].size()
                                          : 0;
         const bool stream = body.value("stream", false);
-        const bool withTool = (g_case == "tool" && msgCount <= 2);
+        // deep：前 3 轮都回 tool_calls（消息数 1/3/5），第 4 轮（7 条消息）回最终答案
+        const bool withTool = (g_case == "tool" && msgCount <= 2) || (g_case == "deep" && msgCount <= 6);
 
         if (stream) {
             res.set_content(buildSse("北京", withTool), "text/event-stream");

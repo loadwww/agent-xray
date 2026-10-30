@@ -12,19 +12,20 @@
 namespace axr {
 namespace {
 
-const char* kVersion = "0.1.0-m1";
+const char* kVersion = "0.1.0-m2";
 
 void printUsage() {
     std::cout << "AgentXray " << kVersion << "\n\n"
               << "用法:\n"
-              << "  axr replay <fixture目录|events.jsonl> [--format mermaid|json|text] [--out file]\n"
+              << "  axr serve [--config config.yaml] [--root dir] [--listen port] [--bind host]\n"
+              << "  axr run [--config config.yaml] [--root dir] [--listen port] -- <command...>\n"
+              << "  axr replay <run目录|events.jsonl> [--format mermaid|json|text] [--out file]\n"
               << "  axr selftest [--fixtures <dir>]\n"
-              << "  axr serve | run | list | show | report | export | diff | prune   （后续阶段实现）\n"
+              << "  axr list | show | report | export | diff | prune   （后续阶段实现）\n"
               << "  axr version\n";
 }
 
 const char* notYetStaged(const std::string& cmd) {
-    if (cmd == "serve" || cmd == "run") return "阶段 2（M2：真流量接入）";
     if (cmd == "show" || cmd == "report" || cmd == "export") return "阶段 3（M3：分析质量）";
     if (cmd == "diff" || cmd == "prune" || cmd == "list") return "阶段 4（M4：工程化）";
     return "";
@@ -57,6 +58,8 @@ int runCli(int argc, char** argv) {
     }
     if (cmd == "replay") return cmdReplay(rest);
     if (cmd == "selftest") return cmdSelftest(rest);
+    if (cmd == "serve") return cmdServe(rest);
+    if (cmd == "run") return cmdRun(rest);
 
     const char* stage = notYetStaged(cmd);
     if (!stage[0]) {

@@ -6,5 +6,7 @@ namespace axr {
 
 int cmdReplay(const std::vector<std::string>& args);
 int cmdSelftest(const std::vector<std::string>& args);
+int cmdServe(const std::vector<std::string>& args);
+int cmdRun(const std::vector<std::string>& args);
 
 } // namespace axr
