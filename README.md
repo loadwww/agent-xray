@@ -68,24 +68,20 @@ irm https://raw.githubusercontent.com/loadwww/agent-xray/master/scripts/install.
 把最新的 `axr.exe` 下载到 `%LOCALAPPDATA%\Programs\axr` 并加入用户 PATH，然后：
 
 ```powershell
-$env:OPENAI_API_KEY = "<你的 key>"
-axr run -- python your_agent.py     # 起代理 + 注入 OPENAI_BASE_URL + 跑完自动收尾
-axr serve --listen 8080             # 或常驻代理，浏览器打开 127.0.0.1:8080/__xray
-axr show <runID>                    # 终端看步骤 / token / 工具扇出
+$env:OPENAI_API_KEY  = "<你的 key>"
+$env:OPENAI_BASE_URL = "http://127.0.0.1:8080/v1"   # 让 agent 走 axr 代理
+axr serve --listen 8080                             # 起代理，浏览器打开 127.0.0.1:8080/__xray
+axr show <runID>                                    # 终端看步骤 / token / 工具扇出
 ```
 
 `axr serve` 是**前台程序**（不会自动弹浏览器），窗口关掉或 `Ctrl+C` 就结束；安装后在任何目录都能直接
-`axr serve`，不需要进仓库目录。两种跑法：
+`axr serve`，不需要进仓库目录。想让它不占用 agent 所在的终端，就在独立窗口里起：
 
 ```powershell
-# A. 单终端：代理随 agent 启动、跑完自动收尾（日常调试推荐）
-axr run -- python your_agent.py
-
-# B. 常驻服务：独立进程 + 独立窗口，不占用 agent 所在的终端
 Start-Process axr -ArgumentList 'serve','--listen','8080' -WorkingDirectory D:\agent-xray
 ```
 
-B 方式下浏览器打开 `http://127.0.0.1:8080/__xray`；结束请到那个窗口按 `Ctrl+C`（会正常写
+浏览器打开 `http://127.0.0.1:8080/__xray`；结束请到那个窗口按 `Ctrl+C`（会正常写
 `run.json` / `report.md`），直接关窗口或用 `Stop-Process` 只会留下 `events.jsonl`。
 
 `config.yaml` 默认从**当前目录**读取：不在仓库目录时用 `--config D:\agent-xray\config.yaml`

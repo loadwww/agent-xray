@@ -34,6 +34,7 @@ if ($userPath -notlike "*$dir*") {
 & $dst version
 Write-Host ""
 Write-Host "安装完成。用法示例:"
-Write-Host "  `$env:OPENAI_API_KEY = '<你的 key>'"
-Write-Host "  axr run -- python your_agent.py"
+Write-Host "  `$env:OPENAI_API_KEY  = '<你的 key>'"
+Write-Host "  `$env:OPENAI_BASE_URL = 'http://127.0.0.1:8080/v1'"
+Write-Host "  axr serve --listen 8080"
 Write-Host "  axr show <runID>"
