@@ -1,5 +1,6 @@
 #pragma once
 // 极简 config.yaml 解析（§9）：只支持本项目用到的子集，不引入 yaml-cpp
+#include <map>
 #include <string>
 #include <vector>
 
@@ -7,6 +8,18 @@
 #include "common/result.h"
 
 namespace axr {
+
+// 单价：USD / 1M tokens（§7.5）
+struct ModelPrice {
+    double input = 1.00;
+    double output = 3.00;
+    double cached = -1.0; // <0 表示按 input 的 1/10 计
+};
+
+struct PricingCfg {
+    std::map<std::string, ModelPrice> models;
+    ModelPrice fallback{1.00, 3.00, -1.0}; // 未知模型兜底
+};
 
 // 上游路由：match 是本地虚拟前缀，转发时被剥掉（见 route.h）
 struct UpstreamDef {
@@ -29,6 +42,7 @@ struct Config {
         int runGapMinutes = 30;
         double fuzzyThreshold = 0.90;
         int fuzzyWindow = 20;
+        int collapseThreshold = 12; // M3 长链折叠阈值（§7.4）
     } chain;
 
     struct RedactCfg {
@@ -41,6 +55,8 @@ struct Config {
         std::string root; // 空表示默认 %USERPROFILE%\.xray
         int retentionDays = 30;
     } storage;
+
+    PricingCfg pricing;
 
     ChainOptions chainOptions() const;
 };

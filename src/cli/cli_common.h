@@ -22,4 +22,7 @@ Status parseProxyArgs(const std::vector<std::string>& args, ProxyCliOpts& out);
 // --config 指定文件；否则尝试当前目录 config.yaml；都没有则用默认配置
 Result<Config> loadEffectiveConfig(const ProxyCliOpts& opts);
 
+// 运行目标解析：run 目录 / events.jsonl / runID（在 <storage.root>/runs 下查找）
+std::string resolveRunInput(const std::string& arg, const Config& cfg);
+
 } // namespace axr

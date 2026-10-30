@@ -100,6 +100,38 @@ std::vector<std::string> parseInlineList(const std::string& v) {
     return out;
 }
 
+bool parsePriceMap(const std::string& raw, ModelPrice& p) {
+    std::string t = trim(raw);
+    if (t.size() < 2 || t.front() != '{' || t.back() != '}') return false;
+    t = t.substr(1, t.size() - 2);
+    std::string cur;
+    for (std::size_t i = 0; i <= t.size(); ++i) {
+        if (i == t.size() || t[i] == ',') {
+            const std::string item = trim(cur);
+            cur.clear();
+            if (item.empty()) continue;
+            const std::size_t c = item.find(':');
+            if (c == std::string::npos) continue;
+            const std::string k = trim(item.substr(0, c));
+            const std::string v = unquote(item.substr(c + 1));
+            if (k == "input") p.input = toDouble(v, p.input);
+            else if (k == "output") p.output = toDouble(v, p.output);
+            else if (k == "cached") p.cached = toDouble(v, p.cached);
+        } else {
+            cur.push_back(t[i]);
+        }
+    }
+    return true;
+}
+
+bool applyPriceKey(ModelPrice& p, const std::string& key, const std::string& value) {
+    if (key == "input") p.input = toDouble(value, p.input);
+    else if (key == "output") p.output = toDouble(value, p.output);
+    else if (key == "cached") p.cached = toDouble(value, p.cached);
+    else return false;
+    return true;
+}
+
 // 把 value 写到对应配置字段；不识别的键静默忽略（配置向前兼容）
 void applyScalar(Config& cfg, const std::string& section, const std::string& key, const std::string& rawValue) {
     const std::string v = unquote(rawValue);
@@ -113,6 +145,7 @@ void applyScalar(Config& cfg, const std::string& section, const std::string& key
         if (key == "run_gap_minutes") cfg.chain.runGapMinutes = toInt(v, cfg.chain.runGapMinutes);
         else if (key == "fuzzy_threshold") cfg.chain.fuzzyThreshold = toDouble(v, cfg.chain.fuzzyThreshold);
         else if (key == "fuzzy_window") cfg.chain.fuzzyWindow = toInt(v, cfg.chain.fuzzyWindow);
+        else if (key == "collapse_threshold") cfg.chain.collapseThreshold = toInt(v, cfg.chain.collapseThreshold);
     } else if (section == "redact") {
         if (key == "headers") cfg.redact.headers = parseInlineList(v);
         else if (key == "patterns") cfg.redact.patterns = parseInlineList(v);
@@ -162,6 +195,12 @@ Config defaultConfig() {
         UpstreamDef{"/ollama", "http://127.0.0.1:11434/v1", "ollama"},
     };
     cfg.storage.root = defaultStorageRoot();
+    // §7.5 单价表（USD / 1M tokens），用户可在 config.yaml 覆盖
+    cfg.pricing.models["deepseek-chat"] = ModelPrice{0.14, 0.28, -1.0};
+    cfg.pricing.models["deepseek-reasoner"] = ModelPrice{0.55, 2.20, -1.0};
+    cfg.pricing.models["gpt-4o"] = ModelPrice{2.50, 10.00, -1.0};
+    cfg.pricing.models["gpt-4o-mini"] = ModelPrice{0.15, 0.60, -1.0};
+    cfg.pricing.fallback = ModelPrice{1.00, 3.00, -1.0};
     return cfg;
 }
 
@@ -176,9 +215,9 @@ ChainOptions Config::chainOptions() const {
 Result<Config> parseConfigText(const std::string& text, const Config& base) {
     Config cfg = base;
 
-    std::string section;  // proxy / chain / redact / storage
-    std::string subKey;   // upstreams / headers / patterns
-    bool upsCleared = false, hdrCleared = false, patCleared = false;
+    std::string section;  // proxy / chain / redact / storage / pricing
+    std::string subKey;   // upstreams / headers / patterns / pricing 模型名
+    bool upsCleared = false, hdrCleared = false, patCleared = false, priceCleared = false;
 
     std::size_t pos = 0;
     while (pos <= text.size()) {
@@ -226,6 +265,11 @@ Result<Config> parseConfigText(const std::string& text, const Config& base) {
             if (indent == 0) {
                 section = key;
                 subKey.clear();
+                // pricing 整段覆盖默认单价表（只清一次）
+                if (key == "pricing" && !priceCleared) {
+                    cfg.pricing.models.clear();
+                    priceCleared = true;
+                }
             } else {
                 subKey = key;
             }
@@ -241,6 +285,31 @@ Result<Config> parseConfigText(const std::string& text, const Config& base) {
             if (indent > 0 && section == "redact" && subKey == "patterns" && !patCleared) {
                 cfg.redact.patterns.clear();
                 patCleared = true;
+            }
+            if (indent > 0 && section == "pricing" && !subKey.empty() && key == subKey &&
+                cfg.pricing.models.find(key) == cfg.pricing.models.end()) {
+                cfg.pricing.models[key] = ModelPrice{}; // 块式写法：先占位，等 input/output 填值
+            }
+            continue;
+        }
+
+        if (section == "pricing" && indent > 0) {
+            if (key == "input" || key == "output" || key == "cached") {
+                if (!subKey.empty()) applyPriceKey(cfg.pricing.models[subKey], key, unquote(value));
+            } else {
+                ModelPrice p;
+                if (key == "default") {
+                    p = cfg.pricing.fallback;
+                } else {
+                    auto it = cfg.pricing.models.find(key);
+                    if (it != cfg.pricing.models.end()) p = it->second;
+                }
+                if (parsePriceMap(value, p)) {
+                    if (key == "default") cfg.pricing.fallback = p;
+                    else cfg.pricing.models[key] = p;
+                } else {
+                    logWarn("config", "pricing 项无法解析: " + key + " = " + value);
+                }
             }
             continue;
         }

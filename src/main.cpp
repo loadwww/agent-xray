@@ -12,22 +12,23 @@
 namespace axr {
 namespace {
 
-const char* kVersion = "0.1.0-m2";
+const char* kVersion = "0.1.0-m3";
 
 void printUsage() {
     std::cout << "AgentXray " << kVersion << "\n\n"
               << "用法:\n"
               << "  axr serve [--config config.yaml] [--root dir] [--listen port] [--bind host]\n"
               << "  axr run [--config config.yaml] [--root dir] [--listen port] -- <command...>\n"
+              << "  axr show <run目录|events.jsonl|runID> [--config config.yaml]\n"
+              << "  axr report <run目录|events.jsonl|runID> [--out file] [--config config.yaml]\n"
               << "  axr replay <run目录|events.jsonl> [--format mermaid|json|text] [--out file]\n"
               << "  axr selftest [--fixtures <dir>]\n"
-              << "  axr list | show | report | export | diff | prune   （后续阶段实现）\n"
+              << "  axr export | diff | prune | list   （阶段 4 实现）\n"
               << "  axr version\n";
 }
 
 const char* notYetStaged(const std::string& cmd) {
-    if (cmd == "show" || cmd == "report" || cmd == "export") return "阶段 3（M3：分析质量）";
-    if (cmd == "diff" || cmd == "prune" || cmd == "list") return "阶段 4（M4：工程化）";
+    if (cmd == "diff" || cmd == "prune" || cmd == "list" || cmd == "export") return "阶段 4（M4：工程化）";
     return "";
 }
 
@@ -60,6 +61,8 @@ int runCli(int argc, char** argv) {
     if (cmd == "selftest") return cmdSelftest(rest);
     if (cmd == "serve") return cmdServe(rest);
     if (cmd == "run") return cmdRun(rest);
+    if (cmd == "show") return cmdShow(rest);
+    if (cmd == "report") return cmdReport(rest);
 
     const char* stage = notYetStaged(cmd);
     if (!stage[0]) {

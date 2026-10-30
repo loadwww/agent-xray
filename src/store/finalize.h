@@ -11,9 +11,14 @@ struct RunSummary {
     std::string sessionId;
     std::string runDir;
     std::string runId;
+    std::string reportPath;
     int stepCount = 0;
     int toolCount = 0;
+    int requestCount = 0;
+    int retryCount = 0;
     int totalTokens = 0;
+    double costUsd = 0.0;
+    bool costKnown = true;
     bool incomplete = false;
     std::vector<std::string> missing;
     std::string primaryModel;

@@ -166,7 +166,7 @@ void from_json(const nlohmann::json& j, ToolExec& t) {
 void to_json(nlohmann::json& j, const Step& s) {
     j = nlohmann::json{{"index", s.index}, {"call", s.call},   {"response", s.response},
                        {"tools", s.tools}, {"tokens", s.tokens}, {"cost_usd", s.costUsd},
-                       {"kind", s.kind}};
+                       {"kind", s.kind},   {"fuzzy_in", s.fuzzyIn}};
 }
 void from_json(const nlohmann::json& j, Step& s) {
     s.index = valueOr<int>(j, "index", 0);
@@ -179,6 +179,7 @@ void from_json(const nlohmann::json& j, Step& s) {
     s.tokens = valueOr<int>(j, "tokens", 0);
     s.costUsd = valueOr<double>(j, "cost_usd", 0.0);
     s.kind = strOr(j, "kind");
+    s.fuzzyIn = valueOr<bool>(j, "fuzzy_in", false);
 }
 
 // ---------- Run ----------
@@ -193,7 +194,10 @@ void to_json(nlohmann::json& j, const Run& r) {
                        {"incomplete", r.incomplete},
                        {"missing", r.missing},
                        {"children", r.children},
-                       {"tags", r.tags}};
+                       {"tags", r.tags},
+                       {"request_count", r.requestCount},
+                       {"retry_count", r.retryCount},
+                       {"fuzzy_edges", r.fuzzyEdges}};
 }
 void from_json(const nlohmann::json& j, Run& r) {
     r.id = strOr(j, "id");
@@ -219,6 +223,9 @@ void from_json(const nlohmann::json& j, Run& r) {
     if (j.contains("tags") && j["tags"].is_array()) {
         for (const auto& item : j["tags"]) r.tags.push_back(item.get<std::string>());
     }
+    r.requestCount = valueOr<int>(j, "request_count", 0);
+    r.retryCount = valueOr<int>(j, "retry_count", 0);
+    r.fuzzyEdges = valueOr<int>(j, "fuzzy_edges", 0);
 }
 
 // ---------- helpers ----------

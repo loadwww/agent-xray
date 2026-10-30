@@ -1,5 +1,6 @@
 #include "cli/cli.h"
 
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <iostream>
@@ -12,6 +13,7 @@
 #include "common/hash.h"
 #include "common/log.h"
 #include "config/config.h"
+#include "cost/pricing.h"
 #include "graph/mermaid.h"
 #include "proxy/event.h"
 #include "proxy/recorder.h"
@@ -19,6 +21,7 @@
 #include "proxy/route.h"
 #include "store/events_reader.h"
 #include "store/run_dir.h"
+#include "ui/report.h"
 
 namespace axr {
 namespace {
@@ -248,6 +251,101 @@ storage:
     }
 }
 
+// 统计 Mermaid 里的节点定义行（S*/Sc* 矩形与 T* 菱形）
+int mermaidNodeCount(const std::string& mmd) {
+    int n = 0;
+    std::size_t pos = 0;
+    while ((pos = mmd.find("[\"", pos)) != std::string::npos) {
+        ++n;
+        pos += 2;
+    }
+    pos = 0;
+    while ((pos = mmd.find("{\"", pos)) != std::string::npos) {
+        ++n;
+        pos += 2;
+    }
+    return n;
+}
+
+void testM3Units(TestCtx& t) {
+    // pricing 配置：inline map / 块式 / default / 整段覆盖默认表
+    {
+        const std::string yaml = R"(
+proxy:
+  upstreams:
+    - match: "/v1"
+      url: "http://127.0.0.1:9099/v1"
+chain:
+  collapse_threshold: 12
+pricing:
+  deepseek-chat: { input: 0.14, output: 0.28 }
+  my-model:
+    input: 0.5
+    output: 1.5
+  default: { input: 1.00, output: 3.00 }
+)";
+        auto cfg = parseConfigText(yaml);
+        t.check(cfg.ok(), "M3 pricing 配置可解析");
+        if (cfg.ok()) {
+            auto it = cfg.value.pricing.models.find("deepseek-chat");
+            t.check(it != cfg.value.pricing.models.end() && std::abs(it->second.input - 0.14) < 1e-9,
+                    "M3 pricing inline map");
+            auto it2 = cfg.value.pricing.models.find("my-model");
+            t.check(it2 != cfg.value.pricing.models.end() && std::abs(it2->second.output - 1.5) < 1e-9,
+                    "M3 pricing 块式解析");
+            t.check(cfg.value.pricing.models.find("gpt-4o") == cfg.value.pricing.models.end(),
+                    "M3 pricing 覆盖默认单价表");
+            t.check(cfg.value.chain.collapseThreshold == 12, "M3 collapse_threshold 解析");
+        }
+    }
+
+    // 成本：与手算一致到 1e-6（§7.5 验收）
+    {
+        Run r;
+        r.steps.resize(2);
+        r.steps[0].call.model = "deepseek-chat";
+        r.steps[0].response.usage = Usage{1000, 500, 0};
+        r.steps[1].call.model = "deepseek-chat";
+        r.steps[1].response.usage = Usage{2000, 300, 0};
+        const CostBreakdown cb = computeCost(r, defaultConfig().pricing);
+        t.check(std::abs(cb.stepUsd[0] - 0.000280) < 1e-6, "M3 step0 成本手算一致");
+        t.check(std::abs(cb.stepUsd[1] - 0.000364) < 1e-6, "M3 step1 成本手算一致");
+        t.check(std::abs(cb.totalUsd - 0.000644) < 1e-6, "M3 总成本手算一致");
+        t.check(cb.complete && cb.hasUsage, "M3 usage 完整");
+        t.check(cb.byModel.count("deepseek-chat") == 1, "M3 按模型归因");
+    }
+
+    // cached token 按 input 的 1/10 计
+    {
+        Run r;
+        r.steps.resize(1);
+        r.steps[0].call.model = "deepseek-chat";
+        r.steps[0].response.usage = Usage{1000, 0, 1000};
+        const CostBreakdown cb = computeCost(r, defaultConfig().pricing);
+        t.check(std::abs(cb.stepUsd[0] - 1000.0 * 0.014 / 1000000.0) < 1e-9, "M3 cached token 1/10 计价");
+    }
+
+    // T9：usage 缺失 → n/a，不崩
+    {
+        Run r;
+        r.steps.resize(1);
+        r.steps[0].call.model = "deepseek-chat";
+        const CostBreakdown cb = computeCost(r, defaultConfig().pricing);
+        t.check(!cb.complete && !cb.stepKnown[0], "M3 无 usage 时成本标记 n/a");
+        t.check(fmtCost(0.0) == "$0.000000", "M3 成本格式化");
+    }
+
+    // 未知模型走 default 单价
+    {
+        Run r;
+        r.steps.resize(1);
+        r.steps[0].call.model = "unknown-model";
+        r.steps[0].response.usage = Usage{1000000, 0, 0};
+        const CostBreakdown cb = computeCost(r, defaultConfig().pricing);
+        t.check(std::abs(cb.stepUsd[0] - 1.00) < 1e-9, "M3 未知模型走 default 单价");
+    }
+}
+
 } // namespace
 
 int cmdSelftest(const std::vector<std::string>& args) {
@@ -258,6 +356,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     testHash(t);
     testModelRoundtrip(t);
     testM2Units(t);
+    testM3Units(t);
 
     // T1 普通对话
     testFixture(dir, "t1_simple", t, [&](const ChainResult& cr) {
@@ -381,6 +480,51 @@ int cmdSelftest(const std::vector<std::string>& args) {
                 "T8 节点 id 使用 S/T 编号");
         t.check(mmd.find("\"a&b\"") == std::string::npos, "T8 图中无未转义的工具名");
         t.check(mmd.find("flowchart TD") == 0, "T8 输出以 flowchart TD 开头");
+    }
+
+    // T7b 模糊匹配 fixture：第 2 个请求改写了 system 提示词
+    testFixture(dir, "t7_fuzzy", t, [&](const ChainResult& cr) {
+        t.check(cr.fuzzyCount >= 1, "M3 fuzzy fixture 走模糊匹配");
+        t.check(cr.runs.size() == 1, "M3 fuzzy 仍归到同一 run");
+        if (cr.runs.empty()) return;
+        const Run& r = cr.runs[0];
+        t.check(r.steps.size() == 2, "M3 fuzzy 2 Step");
+        t.check(r.steps[1].fuzzyIn, "M3 fuzzy 边标记到后一步");
+        t.check(r.fuzzyEdges >= 1, "M3 fuzzy 边计数");
+        const std::string mmd = toMermaid(r);
+        t.check(mmd.find("-.->|推测|") != std::string::npos, "M3 fuzzy 边在图中是虚线且标注推测");
+    });
+
+    // 长链折叠：50 步 fixture，节点数 ≤ 12 + 折叠节点
+    testFixture(dir, "t12_long_chain", t, [&](const ChainResult& cr) {
+        t.check(cr.runs.size() == 1, "M3 长链 1 run");
+        if (cr.runs.empty()) return;
+        const Run& r = cr.runs[0];
+        t.check(r.steps.size() == 50, "M3 长链 50 Step");
+        t.check(r.requestCount == 51, "M3 原始请求 51");
+        t.check(r.retryCount == 1, "M3 重试请求 1 条");
+        t.check(r.steps.size() < r.requestCount, "M3 步骤数比原始请求数少");
+        const std::string mmd = toMermaid(r);
+        t.check(mermaidNodeCount(mmd) <= 13, "M3 长链折叠后节点数 ≤ 12 + 折叠节点");
+        t.check(mmd.find("「循环」") != std::string::npos, "M3 折叠节点出现在图上");
+    });
+
+    // report.md：概览 / 流程图 / 时间线 / 工具表 / 成本表 / 缺失警告
+    {
+        auto chain = buildChainFromEvents(dir + "/t5_missing");
+        if (chain.ok() && !chain.value.runs.empty()) {
+            const Run& r = chain.value.runs[0];
+            const std::string rep = buildReport(r, computeCost(r, defaultConfig().pricing));
+            t.check(rep.find("⚠ 检测到缺失步骤") != std::string::npos, "M3 报告顶部有缺失警告");
+            t.check(rep.find("## 执行流程") != std::string::npos && rep.find("```mermaid") != std::string::npos,
+                    "M3 报告内嵌流程图");
+            t.check(rep.find("## 时间线") != std::string::npos, "M3 报告含时间线");
+            t.check(rep.find("## 工具调用") != std::string::npos, "M3 报告含工具调用表");
+            t.check(rep.find("## 成本") != std::string::npos && rep.find("Total:") != std::string::npos,
+                    "M3 报告含成本表与合计");
+        } else {
+            t.check(false, "M3 报告夹具加载失败");
+        }
     }
 
     std::cout << "\n结果: " << t.pass << " passed, " << t.fail << " failed\n";

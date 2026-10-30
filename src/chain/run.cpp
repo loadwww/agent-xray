@@ -73,6 +73,7 @@ ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts) {
     }
 
     // 4. 逐根收集后代，按时间窗切成若干 run
+    std::map<int, std::size_t> callToRun; // 请求下标 → run 下标（重试计数归并要用）
     for (int root : roots) {
         std::vector<int> group;
         std::vector<int> stack{root};
@@ -106,6 +107,7 @@ ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts) {
             run.rootHash = prefixHashes(pairs[s.front()].call.messages).back();
             run.id = compactStamp(pairs[s.front()].call.startedAt) + "-" + run.rootHash.substr(0, 8);
             run.startedAt = pairs[s.front()].call.startedAt;
+            run.requestCount = static_cast<int>(s.size());
 
             for (std::size_t k = 0; k < s.size(); ++k) {
                 const CallPair& cp = pairs[s[k]];
@@ -120,6 +122,16 @@ ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts) {
                                            static_cast<int>(approxMs > 0 ? approxMs : 0));
                 }
                 Step step = buildStep(static_cast<int>(k), cp.call, cp.resp, std::move(tools));
+                // 相邻两步之间若是模糊匹配边，标记到后一步（图上画虚线并注"推测"）
+                if (k > 0) {
+                    for (const auto& l : lr.links) {
+                        if (l.fuzzy && l.from == s[k - 1] && l.to == s[k]) {
+                            step.fuzzyIn = true;
+                            ++run.fuzzyEdges;
+                            break;
+                        }
+                    }
+                }
                 run.total.promptTokens += cp.resp.usage.promptTokens;
                 run.total.completionTokens += cp.resp.usage.completionTokens;
                 run.total.cachedTokens += cp.resp.usage.cachedTokens;
@@ -129,8 +141,20 @@ ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts) {
             run.endedAt = pairs[s.back()].call.endedAt.empty() ? pairs[s.back()].call.startedAt
                                                                : pairs[s.back()].call.endedAt;
             run.incomplete = !validate(run, run.missing);
+            const std::size_t runIdx = result.runs.size();
+            for (int idx : s) callToRun[idx] = runIdx;
             result.runs.push_back(std::move(run));
         }
+    }
+
+    // 5. 重试请求（完整哈希重复）不进 steps，但归入其父请求所在的 run 统计
+    for (const auto& l : lr.links) {
+        if (!l.retry) continue;
+        auto it = callToRun.find(l.from);
+        if (it == callToRun.end()) continue;
+        Run& r = result.runs[it->second];
+        ++r.retryCount;
+        ++r.requestCount;
     }
 
     std::sort(result.runs.begin(), result.runs.end(),

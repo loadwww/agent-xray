@@ -53,4 +53,17 @@ Result<Config> loadEffectiveConfig(const ProxyCliOpts& opts) {
     return Result<Config>::Ok(cfg);
 }
 
+std::string resolveRunInput(const std::string& arg, const Config& cfg) {
+    if (arg.empty()) return arg;
+    if (std::filesystem::exists(arg)) return arg;
+
+    // 纯 runID（不含路径分隔符）→ <root>/runs/<id>
+    if (arg.find('/') == std::string::npos && arg.find('\\') == std::string::npos) {
+        const std::filesystem::path candidate =
+            std::filesystem::path(cfg.storage.root) / "runs" / arg;
+        if (std::filesystem::exists(candidate)) return candidate.string();
+    }
+    return arg;
+}
+
 } // namespace axr

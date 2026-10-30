@@ -22,6 +22,15 @@ chain:
   run_gap_minutes: 30
   fuzzy_threshold: 0.90
   fuzzy_window: 20
+  collapse_threshold: 12   # 步骤超过该值时，中间连续"带工具步骤"折叠成循环块
+
+# 单价表（USD / 1M tokens，§7.5）；未知模型走 default
+pricing:
+  deepseek-chat:        { input: 0.14, output: 0.28 }
+  deepseek-reasoner:    { input: 0.55, output: 2.20 }
+  gpt-4o:               { input: 2.50, output: 10.00 }
+  gpt-4o-mini:          { input: 0.15, output: 0.60 }
+  default:              { input: 1.00, output: 3.00 }
 
 redact:
   headers:

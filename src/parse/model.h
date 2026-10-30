@@ -90,6 +90,7 @@ struct Step {
     int tokens = 0;
     double costUsd = 0;
     std::string kind;              // "llm" | "final"
+    bool fuzzyIn = false;          // 与上一步的连接来自模糊匹配（§7.3.4，图上虚线标注"推测"）
 };
 
 struct Run {
@@ -104,6 +105,9 @@ struct Run {
     std::vector<std::string> missing; // 缺失步骤的描述
     std::vector<Run> children;        // 并行子链（本期预留，不做树展开）
     std::vector<std::string> tags;
+    int requestCount = 0;  // 归入本 run 的原始 HTTP 请求数（含重试）
+    int retryCount = 0;    // 其中完整哈希重复的重试请求数（不进 steps）
+    int fuzzyEdges = 0;    // 本 run 内模糊匹配边数
 };
 
 // ---- JSON 互转（写在 model.cpp；字段缺失用默认值，不抛异常）----

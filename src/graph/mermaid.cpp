@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace axr {
 namespace {
@@ -25,6 +26,50 @@ std::string shorten(const std::string& s, std::size_t maxLen) {
     return s.substr(0, maxLen) + "…";
 }
 
+std::string stepNodeId(int index) { return "S" + std::to_string(index); }
+
+// 长链折叠布局：首尾各保留 2 步，中间连续"带工具的步骤"合并成循环块（§7.4）
+struct Block {
+    int begin = 0;
+    int end = 0; // 闭区间
+    bool collapsed = false;
+    std::string id;
+};
+
+std::vector<Block> layoutBlocks(const Run& run, const MermaidOptions& opts) {
+    const int n = static_cast<int>(run.steps.size());
+    std::vector<Block> blks;
+    const int firstKeep = 2;
+    const int lastKeep = 2;
+
+    if (n <= opts.collapseThreshold || n < firstKeep + lastKeep + 2) {
+        for (int i = 0; i < n; ++i) blks.push_back(Block{i, i, false, stepNodeId(i)});
+        return blks;
+    }
+
+    int i = 0;
+    while (i < n) {
+        const bool inMiddle = (i >= firstKeep && i <= n - lastKeep - 1);
+        if (inMiddle && !run.steps[i].tools.empty()) {
+            int j = i;
+            while (j + 1 <= n - lastKeep - 1 && !run.steps[j + 1].tools.empty()) ++j;
+            if (j - i + 1 >= 2) {
+                Block b;
+                b.begin = i;
+                b.end = j;
+                b.collapsed = true;
+                b.id = "Sc" + std::to_string(i);
+                blks.push_back(b);
+                i = j + 1;
+                continue;
+            }
+        }
+        blks.push_back(Block{i, i, false, stepNodeId(i)});
+        ++i;
+    }
+    return blks;
+}
+
 } // namespace
 
 std::string escapeMermaidLabel(const std::string& s) {
@@ -45,14 +90,24 @@ std::string escapeMermaidLabel(const std::string& s) {
 }
 
 std::string toMermaid(const Run& run, const MermaidOptions& opts) {
-    (void)opts;
-    std::string out;
-    out += "flowchart TD\n";
+    std::string out = "flowchart TD\n";
+    const auto blks = layoutBlocks(run, opts);
 
-    // 每个 Step 一个矩形节点
-    for (std::size_t i = 0; i < run.steps.size(); ++i) {
-        const Step& s = run.steps[i];
-        std::string label = circled(static_cast<int>(i) + 1) + " " + s.call.model;
+    // 1. 步骤节点（折叠块用独立节点）
+    bool anyLoop = false;
+    for (const auto& b : blks) {
+        if (b.collapsed) {
+            int steps = b.end - b.begin + 1;
+            int tools = 0;
+            for (int i = b.begin; i <= b.end; ++i) tools += static_cast<int>(run.steps[i].tools.size());
+            const std::string label = "「循环」" + std::to_string(steps) + " 步 · " + std::to_string(tools) +
+                                      " 次工具调用（已折叠）";
+            out += "    " + b.id + "[\"" + escapeMermaidLabel(label) + "\"]\n";
+            anyLoop = true;
+            continue;
+        }
+        const Step& s = run.steps[b.begin];
+        std::string label = circled(b.begin + 1) + " " + s.call.model;
         label += " · " + std::to_string(s.tokens) + " tok";
         if (s.response.latencyMs > 0) label += " · " + fmtSeconds(s.response.latencyMs);
         if (!s.response.toolCalls.empty()) {
@@ -64,27 +119,32 @@ std::string toMermaid(const Run& run, const MermaidOptions& opts) {
         } else if (s.kind == "final") {
             label += "<br/>final answer";
         }
-        out += "    S" + std::to_string(i) + "[\"" + escapeMermaidLabel(label) + "\"]\n";
+        out += "    " + b.id + "[\"" + escapeMermaidLabel(label) + "\"]\n";
     }
 
-    // 工具节点（菱形）+ 边
+    // 2. 步骤之间连边；模糊匹配的边画虚线并注"推测"
+    for (std::size_t k = 1; k < blks.size(); ++k) {
+        const int target = blks[k].begin;
+        const bool fuzzy = !blks[k].collapsed && run.steps[target].fuzzyIn;
+        out += "    " + blks[k - 1].id + (fuzzy ? " -.->|推测| " : " --> ") + blks[k].id + "\n";
+    }
+
+    // 3. 工具菱形节点（折叠块不展开，避免图过大）
     bool anyFail = false;
-    for (std::size_t i = 0; i < run.steps.size(); ++i) {
-        const Step& s = run.steps[i];
-        const bool hasNext = (i + 1 < run.steps.size());
-        if (s.tools.empty()) {
-            if (hasNext) out += "    S" + std::to_string(i) + " --> S" + std::to_string(i + 1) + "\n";
-            continue;
-        }
+    for (std::size_t k = 0; k < blks.size(); ++k) {
+        const Block& b = blks[k];
+        if (b.collapsed) continue;
+        const Step& s = run.steps[b.begin];
+        const std::string nextId = (k + 1 < blks.size()) ? blks[k + 1].id : std::string();
         for (std::size_t t = 0; t < s.tools.size(); ++t) {
             const ToolExec& te = s.tools[t];
-            const std::string id = "T" + std::to_string(i) + "_" + std::to_string(t);
+            const std::string id = "T" + std::to_string(b.begin) + "_" + std::to_string(t);
             std::string label = "tool: " + te.name;
             if (!te.arguments.empty()) label += "<br/>" + shorten(te.arguments, 48);
             if (te.durationMs > 0) label += "<br/>~" + fmtSeconds(te.durationMs);
             out += "    " + id + "{\"" + escapeMermaidLabel(label) + "\"}\n";
-            out += "    S" + std::to_string(i) + " --> " + id + "\n";
-            if (hasNext) out += "    " + id + " --> S" + std::to_string(i + 1) + "\n";
+            out += "    " + b.id + " --> " + id + "\n";
+            if (!nextId.empty()) out += "    " + id + " --> " + nextId + "\n";
             if (te.isError) {
                 anyFail = true;
                 out += "    class " + id + " fail\n";
@@ -92,6 +152,7 @@ std::string toMermaid(const Run& run, const MermaidOptions& opts) {
         }
     }
 
+    if (anyLoop) out += "    classDef loop fill:#eef,stroke:#66c,stroke-dasharray:4 3\n";
     if (anyFail) out += "    classDef fail fill:#fdd,stroke:#c00\n";
     return out;
 }

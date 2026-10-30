@@ -6,9 +6,11 @@
 #include "chain/run.h"
 #include "common/log.h"
 #include "common/time_util.h"
+#include "cost/pricing.h"
 #include "graph/mermaid.h"
 #include "store/events_reader.h"
 #include "store/run_dir.h"
+#include "ui/report.h"
 
 namespace axr {
 namespace {
@@ -24,8 +26,12 @@ void writeMeta(const std::string& runDir, const RunSummary& s, const Run* run, l
     m["duration_ms"] = durationMs;
     m["step_count"] = s.stepCount;
     m["tool_count"] = s.toolCount;
+    m["request_count"] = s.requestCount;
+    m["retry_count"] = s.retryCount;
     m["total_tokens"] = s.totalTokens;
     m["cost_usd"] = run ? run->costUsd : 0.0;
+    m["cost_known"] = s.costKnown;
+    if (run) m["fuzzy_edges"] = run->fuzzyEdges;
     nlohmann::json models = nlohmann::json::array();
     if (run) {
         for (const auto& st : run->steps) {
@@ -39,6 +45,7 @@ void writeMeta(const std::string& runDir, const RunSummary& s, const Run* run, l
     m["models"] = models;
     m["status"] = s.status;
     m["incomplete"] = s.incomplete;
+    m["report"] = s.reportPath;
     if (s.droppedEvents > 0) m["dropped_events"] = s.droppedEvents;
     writeTextFile(joinPath(runDir, "meta.json"), m.dump(2));
 }
@@ -74,8 +81,8 @@ RunSummary finalizeRun(const std::string& runDir, const Config& cfg, long long d
     }
 
     // 主 run：步数最多的那条；并列时取开始最早的
-    const Run* primary = &chain.value.runs.front();
-    for (const auto& r : chain.value.runs) {
+    Run* primary = &chain.value.runs.front();
+    for (auto& r : chain.value.runs) {
         if (r.steps.size() >= primary->steps.size()) primary = &r;
     }
 
@@ -83,6 +90,8 @@ RunSummary finalizeRun(const std::string& runDir, const Config& cfg, long long d
     s.stepCount = static_cast<int>(primary->steps.size());
     s.toolCount = 0;
     for (const auto& st : primary->steps) s.toolCount += static_cast<int>(st.tools.size());
+    s.requestCount = primary->requestCount;
+    s.retryCount = primary->retryCount;
     s.totalTokens = primary->total.promptTokens + primary->total.completionTokens;
     s.incomplete = primary->incomplete;
     s.missing = primary->missing;
@@ -94,8 +103,18 @@ RunSummary finalizeRun(const std::string& runDir, const Config& cfg, long long d
     const auto t1 = parseRfc3339(primary->endedAt);
     if (t0.ok() && t1.ok()) durationMs = diffMillis(t1.value, t0.value);
 
+    // M3：成本 + 报告
+    MermaidOptions mo;
+    mo.collapseThreshold = cfg.chain.collapseThreshold;
+    applyCost(*primary, cfg.pricing);
+    const CostBreakdown cost = computeCost(*primary, cfg.pricing);
+    s.costUsd = primary->costUsd;
+    s.costKnown = cost.complete;
+    s.reportPath = joinPath(runDir, "report.md");
+
     writeTextFile(joinPath(runDir, "run.json"), nlohmann::json(*primary).dump(2));
-    writeTextFile(joinPath(runDir, "graph.mmd"), toMermaid(*primary));
+    writeTextFile(joinPath(runDir, "graph.mmd"), toMermaid(*primary, mo));
+    writeTextFile(s.reportPath, buildReport(*primary, cost, mo));
     writeMeta(runDir, s, primary, durationMs);
 
     logInfo("run", "分析完成: " + s.sessionId + " steps=" + std::to_string(s.stepCount) +

@@ -32,7 +32,7 @@ powershell -ExecutionPolicy Bypass -File tests\e2e_proxy.ps1
 
 ```powershell
 # M1：离线回放与自检
-build\axr.exe selftest                                  # 79 条断言：hash / model / SSE / 链 / fuzzy / 配置 / 路由 / 脱敏 / 录制
+build\axr.exe selftest                                  # 111 条断言：hash / model / SSE / 链 / fuzzy / 配置 / 路由 / 脱敏 / 录制 / 成本 / 报告
 build\axr.exe replay tests\fixtures\deepseek_tool_2 --format mermaid --out build\graph.mmd
 build\axr.exe replay tests\fixtures\t2_single_tool --format json
 
@@ -41,6 +41,11 @@ build\axr.exe serve --config config.yaml                        # 前台代理�
 build\axr.exe run -- python my_agent.py                         # 起代理 + 跑子进程 + 自动收尾
 build\axr.exe run --stream -- python my_agent.py                # 同上（录制 SSE 逐 chunk）
 build\axr.exe run --config tests\proxy_test.yaml -- python tests\fake_agent.py
+
+# M3：分析质量
+build\axr.exe show tests\fixtures\t12_long_chain               # 终端摘要：请求数/重试/步数/成本/时间线/工具扇出
+build\axr.exe report tests\fixtures\t7_fuzzy --out build\r.md  # 生成 Markdown 报告（默认写到 events.jsonl 同目录 report.md）
+build\axr.exe report --root build\e2e-runs 20261030-182151-eba2 # 用 run id 出报告
 ```
 
 ## M2 工作方式
@@ -74,6 +79,36 @@ proxy:
 落盘副本自动脱敏：`authorization` / `x-api-key` / `api-key` 头置为 `***`，
 body 中 `sk-...` 形态密钥按正则替换；原始请求照常转发，不影响上游鉴权。
 
+## M3 分析质量
+
+每次收尾除 `run.json` / `graph.mmd` / `meta.json` 外还会写 `report.md`，
+包含概览、执行流程、时间线、工具调用表、成本表（含按模型 / 按工具归因）与备注。
+
+成本按 `config.yaml` 的 `pricing` 段计价（USD / 1M tokens，cached 默认取 input 的 1/10）：
+
+```yaml
+pricing:
+  deepseek-chat:     { input: 0.14, output: 0.28 }
+  deepseek-reasoner: { input: 0.55, output: 2.20 }
+  gpt-4o:            { input: 2.50, output: 10.00 }
+  default:           { input: 1.00, output: 3.00 }   # 未列出的模型走这里
+```
+
+该段一旦出现即整段覆盖内建单价表（未列出的模型回落到 `default`）。
+响应里没有 `usage` 的步骤成本记为 `n/a`，不会被当成 0 计入合计。
+
+图与报告的几处标注：
+
+- **模糊边**：请求前缀哈希失配、但消息相似度 ≥ `chain.fuzzy_threshold` 时连边，图上用虚线
+  `-.->|推测|`，报告备注区会说明条数。
+- **长链折叠**：步骤数超过 `chain.collapse_threshold`（默认 12）时，保留首 2 / 尾 2 步，
+  中间连续带工具的步骤合并为一个 `「循环」` 节点（虚线框），避免图不可读。
+- **步骤数 < 原始请求数**：重试请求（与前一条完全重复）不计入 Step，只累加 `原始请求 / 重试` 计数。
+  因此 `axr show` 会打印 `原始请求 N（重试 R）· Step S`，S 可能小于 N。
+
+`axr show <目录|runID>` 打印终端摘要（状态、token / 成本、时间线、工具扇出）；
+`axr report <目录|runID> [--out 路径]` 生成 Markdown 报告，默认写到 `events.jsonl` 所在目录。
+
 ## 与设计文档的偏离
 
 | 项 | 设计文档 | 实现 | 原因 |
@@ -81,11 +116,12 @@ body 中 `sk-...` 形态密钥按正则替换；原始请求照常转发，不�
 | HTTP 转发库 | libcurl（§7.1.3） | WinHTTP（`winhttp.lib`） | 本机无 libcurl 开发包/OpenSSL；WinHTTP 走系统 Schannel，零第三方依赖 |
 | 路由拼接 | 示例间语义冲突 | 统一为"剥离 match 前缀 + url 作为上游基址" | 使 deepseek 与 ollama 两种上游同时可用 |
 | SSE 客户端体验 | 流式透传 | M2 采用 S1 非流式缓冲：上游逐 chunk 录制，响应聚合成完整包返回客户端 | 设计文档 §7.1.4 建议 M2 先用 S1；录制保真度不受影响 |
+| "步骤数少于请求数"验收 | 未指定减量来源 | 以"重试请求不进 Step"实现：`tests/fixtures/t12_long_chain` 51 请求 / 50 步 | 常规 agent 每请求即一步，须有明确合法减量机制才可验证 |
 
 ## 状态
 
 - [x] 阶段 0：环境搭建（MSVC 14.41 / WinSDK 10.0.22621 / CMake 3.29.5 / Ninja 1.11）
 - [x] 阶段 1（M1）：离线闭环 — mock fixture → parse → chain → mermaid
 - [x] 阶段 2（M2）：真流量接入（反向代理 + 录制 + `axr run`）
-- [ ] 阶段 3（M3）：分析质量（superstep / fuzzy / validate / cost / report）
+- [x] 阶段 3（M3）：分析质量（superstep / fuzzy / validate / cost / report）
 - [ ] 阶段 4（M4）：工程化（diff / prune / list / export / 性能）
