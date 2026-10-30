@@ -77,6 +77,7 @@ int cmdServe(const std::vector<std::string>& args) {
     std::cout << "AgentXray 代理已启动\n"
               << "  监听: " << base << "\n"
               << "  用法: OPENAI_BASE_URL=" << base << "/v1\n"
+              << "  页面: " << base << "/__xray （浏览器打开可看实时流程图）\n"
               << "  会话: " << runDir << "\n"
               << "  按 Ctrl+C 结束并生成分析产物\n";
 

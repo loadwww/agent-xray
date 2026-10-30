@@ -15,6 +15,7 @@
 #include "proxy/inject.h"
 #include "proxy/redact.h"
 #include "proxy/route.h"
+#include "ui/webui.h"
 
 namespace axr {
 namespace {
@@ -184,6 +185,29 @@ void ReverseProxySource::emit(const Event& e) {
 }
 
 void ReverseProxySource::handle(const httplib::Request& req, httplib::Response& res) {
+    // 内置 Web UI：GET /__xray 与浏览器访问根路径；不转发、不落事件
+    if (req.method == "GET") {
+        WebResponse wr;
+        bool matched = true;
+        if (req.path == "/__xray" || req.path == "/__xray/") {
+            wr = webUiPage();
+        } else if (req.path == "/__xray/api/runs") {
+            wr = webUiRuns(cfg_);
+        } else if (req.path == "/__xray/api/run") {
+            wr = webUiRun(cfg_, req.get_param_value("id"));
+        } else if (webUiWantsHtml(req.path, req.get_header_value("Accept"))) {
+            wr = webUiPage();
+        } else {
+            matched = false;
+        }
+        if (matched) {
+            res.status = wr.status;
+            res.set_header("Cache-Control", "no-store");
+            res.set_content(wr.body, wr.contentType.c_str());
+            return;
+        }
+    }
+
     const std::string hop = "h-" + std::to_string(++hopCounter_);
 
     std::map<std::string, std::string> headers;

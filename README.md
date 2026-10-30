@@ -41,6 +41,31 @@ M2 端到端验收（离线 mock，无需任何 API key）：
 powershell -ExecutionPolicy Bypass -File tests\e2e_proxy.ps1
 ```
 
+## 内置 Web UI（流程图直接在浏览器看）
+
+`axr serve` 起来后，浏览器访问同一端口即可（页面内嵌在 exe 里，不需要联网、不依赖 CDN）：
+
+```
+http://127.0.0.1:8080/__xray
+```
+
+浏览器直接打开 `http://127.0.0.1:8080/` 也会自动返回页面（仅当 `Accept: text/html`，API 客户端的 `GET /` 仍照常转发）。
+
+页面内容：
+
+- 左侧 run 列表（每 3 秒自动刷新，能看到正在采集的 run）
+- 右侧流程图：Step 节点纵向串联，工具节点横向扇出，模糊匹配边为橙色虚线，失败工具标红
+- 步骤明细表 + 可展开的完整回复 / 工具参数与结果
+- Mermaid 源码（可复制到 mermaid.live 查看官方渲染版）
+
+数据来源分两种：已经 `Ctrl+C` 收尾的 run 读 `run.json`（成本已写回）；还在采集中的 run 直接从
+`events.jsonl` 实时建链，因此跑 AutoGPT 之类长任务时可以边跑边看。接口只有两个：
+
+```
+GET /__xray/api/runs         # run 列表（JSON 数组）
+GET /__xray/api/run?id=<id>  # 单个 run 的步骤 / 成本 / mermaid 源码
+```
+
 ## 已实现命令
 
 ```powershell

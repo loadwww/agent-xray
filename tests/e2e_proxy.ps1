@@ -143,6 +143,19 @@ try {
             $status = 200
         } catch { $status = [int]$_.Exception.Response.StatusCode }
         Check ($status -eq 404) "未匹配路径返回 404（实际 $status）"
+
+        # 内置 Web UI：页面 + runs 接口 + 浏览器根路径
+        $ui = Invoke-WebRequest -Uri "http://127.0.0.1:8082/__xray" -TimeoutSec 5 -UseBasicParsing
+        Check ($ui.StatusCode -eq 200 -and $ui.Content -match "AgentXray") "Web UI 页面可访问（/__xray）"
+        $uiApi = Invoke-WebRequest -Uri "http://127.0.0.1:8082/__xray/api/runs" -TimeoutSec 5 -UseBasicParsing
+        Check ($uiApi.StatusCode -eq 200 -and $uiApi.Content -match "\[") "Web UI runs 接口返回 JSON 数组"
+        $uiRoot = Invoke-WebRequest -Uri "http://127.0.0.1:8082/" -Headers @{ Accept = "text/html" } -TimeoutSec 5 -UseBasicParsing
+        Check ($uiRoot.StatusCode -eq 200 -and $uiRoot.Content -match "AgentXray") "浏览器访问根路径返回页面"
+        try {
+            Invoke-WebRequest -Uri "http://127.0.0.1:8082/nope" -Headers @{ Accept = "text/html" } -TimeoutSec 5 -UseBasicParsing | Out-Null
+            $status = 200
+        } catch { $status = [int]$_.Exception.Response.StatusCode }
+        Check ($status -eq 404) "带 text/html 的其他路径不走 UI（404）"
     }
     if (!$serve.HasExited) { Stop-Process -Id $serve.Id -Force }
     Check (Test-Path (Join-Path $serveRoot "runs")) "serve 也创建了会话目录"

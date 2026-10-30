@@ -28,6 +28,7 @@
 #include "store/run_dir.h"
 #include "store/run_index.h"
 #include "ui/report.h"
+#include "ui/webui.h"
 
 namespace axr {
 namespace {
@@ -545,6 +546,43 @@ void testM4Units(TestCtx& t, const std::string& fixturesDir) {
     }
 }
 
+// 内置 Web UI：页面 + runs 列表 + 单 run 明细（采集中从 events.jsonl 实时建链）
+void testWebUi(TestCtx& t, const std::string& fixturesDir) {
+    t.check(webUiPage().body.find("AgentXray") != std::string::npos, "UI 页面包含标题");
+    t.check(webUiPage().body.find("/__xray/api/runs") != std::string::npos, "UI 页面带 runs 接口");
+    t.check(webUiWantsHtml("/", "text/html,application/xhtml+xml"), "UI 浏览器根路径识别");
+    t.check(!webUiWantsHtml("/", "application/json"), "UI 非浏览器根路径不接管");
+    t.check(!webUiWantsHtml("/v1/models", "text/html"), "UI 不影响其他路径");
+
+    const std::filesystem::path tmp =
+        std::filesystem::temp_directory_path() / ("axr-webui-" + makeSessionId());
+    const std::filesystem::path runDir = tmp / "runs" / "20261030-120000-abcd";
+    std::filesystem::create_directories(runDir);
+    std::filesystem::copy_file(fixturesDir + "/t2_single_tool/events.jsonl", runDir / "events.jsonl");
+
+    Config cfg = defaultConfig();
+    cfg.storage.root = tmp.string();
+
+    auto runs = webUiRuns(cfg);
+    t.check(runs.status == 200, "UI runs 接口 200");
+    auto list = nlohmann::json::parse(runs.body, nullptr, false);
+    t.check(list.is_array() && list.size() == 1, "UI runs 列出 1 个 run");
+    if (list.is_array() && !list.empty()) t.check(list[0]["id"] == "20261030-120000-abcd", "UI runs id 正确");
+
+    auto detail = webUiRun(cfg, "20261030-120000-abcd");
+    t.check(detail.status == 200, "UI run 明细 200");
+    auto d = nlohmann::json::parse(detail.body, nullptr, false);
+    t.check(d.is_object() && d.contains("steps") && d["steps"].is_array(), "UI run 明细含 steps");
+    t.check(d.contains("mermaid") && d["mermaid"].get<std::string>().find("flowchart") != std::string::npos,
+            "UI run 明细含 mermaid 源码");
+    t.check(d.contains("total") && d["total"]["tokens"].get<int>() > 0, "UI run 明细含 token 汇总");
+
+    t.check(webUiRun(cfg, "../etc").status == 400, "UI run 拒绝路径穿越 id");
+    t.check(webUiRun(cfg, "nope").status == 404, "UI run 未知 id 返回 404");
+
+    std::filesystem::remove_all(tmp);
+}
+
 } // namespace
 
 int cmdSelftest(const std::vector<std::string>& args) {
@@ -557,6 +595,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     testM2Units(t);
     testM3Units(t);
     testM4Units(t, dir);
+    testWebUi(t, dir);
 
     // T1 普通对话
     testFixture(dir, "t1_simple", t, [&](const ChainResult& cr) {
