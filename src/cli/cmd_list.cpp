@@ -7,7 +7,6 @@
 #include <nlohmann/json.hpp>
 
 #include "cli/cli_common.h"
-#include "cost/pricing.h"
 #include "store/run_index.h"
 
 namespace axr {
@@ -49,8 +48,6 @@ nlohmann::json toJsonArray(const std::vector<RunMeta>& metas) {
         j["request_count"] = m.requestCount;
         j["retry_count"] = m.retryCount;
         j["total_tokens"] = m.totalTokens;
-        j["cost_usd"] = m.costUsd;
-        j["cost_known"] = m.costKnown;
         j["models"] = m.models;
         j["has_meta"] = m.hasMeta;
         j["age_days"] = m.ageDays;
@@ -88,13 +85,12 @@ int cmdList(const std::vector<std::string>& args) {
 
     std::cout << "共 " << metas.value.size() << " 个 run（root: " << cfg.value.storage.root << "）\n";
     if (metas.value.empty()) return 0;
-    std::cout << "| run | 时间 | 状态 | Step | 工具 | token | 成本 |\n"
-              << "|---|---|---|---|---|---|---|\n";
+    std::cout << "| run | 时间 | 状态 | Step | 工具 | token |\n"
+              << "|---|---|---|---|---|---|\n";
     for (const auto& m : metas.value) {
         const std::string status = m.hasMeta ? m.status : "无 meta";
         std::cout << "| " << cell(m.dirName) << " | " << cell(m.startedAt) << " | " << status << " | "
-                  << m.stepCount << " | " << m.toolCount << " | " << m.totalTokens << " | "
-                  << (m.costKnown ? fmtCost(m.costUsd) : std::string("n/a")) << " |\n";
+                  << m.stepCount << " | " << m.toolCount << " | " << m.totalTokens << " |\n";
     }
     return 0;
 }

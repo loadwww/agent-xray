@@ -6,7 +6,6 @@
 
 #include "chain/run.h"
 #include "cli/cli_common.h"
-#include "cost/pricing.h"
 #include "graph/mermaid.h"
 #include "store/events_reader.h"
 #include "store/run_dir.h"
@@ -65,9 +64,7 @@ int cmdExport(const std::vector<std::string>& args) {
         return 1;
     }
 
-    // 复制一份：导出时按当前单价表补齐成本字段，不改动链上数据
-    Run run = *found;
-    applyCost(run, cfg.value.pricing);
+    const Run& run = *found;
 
     std::string payload;
     if (opts.format == "mermaid") {

@@ -45,8 +45,6 @@ void readMetaFile(const std::string& metaPath, RunMeta& m) {
     m.requestCount = j.value("request_count", 0);
     m.retryCount = j.value("retry_count", 0);
     m.totalTokens = j.value("total_tokens", 0);
-    m.costUsd = j.value("cost_usd", 0.0);
-    m.costKnown = j.value("cost_known", false);
     m.reportPath = j.value("report", "");
     if (j.contains("models") && j["models"].is_array()) {
         for (const auto& x : j["models"])

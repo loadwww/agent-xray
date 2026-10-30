@@ -88,7 +88,6 @@ struct Step {
     LLMResponse response;
     std::vector<ToolExec> tools;   // 本轮并行触发的工具
     int tokens = 0;
-    double costUsd = 0;
     std::string kind;              // "llm" | "final"
     bool fuzzyIn = false;          // 与上一步的连接来自模糊匹配（§7.3.4，图上虚线标注"推测"）
 };
@@ -100,7 +99,6 @@ struct Run {
     std::string endedAt;
     std::vector<Step> steps;
     Usage total;
-    double costUsd = 0;
     bool incomplete = false;          // ★完整性校验结果
     std::vector<std::string> missing; // 缺失步骤的描述
     std::vector<Run> children;        // 并行子链（本期预留，不做树展开）

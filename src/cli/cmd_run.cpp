@@ -4,7 +4,6 @@
 
 #include "cli/cli_common.h"
 #include "common/log.h"
-#include "cost/pricing.h"
 #include "proxy/runner.h"
 
 namespace axr {
@@ -42,8 +41,7 @@ int cmdRun(const std::vector<std::string>& args) {
         std::cout << "  （未捕获到 LLM 流量，检查 agent 是否使用 OPENAI_BASE_URL）\n";
     } else {
         std::cout << "  " << s.stepCount << " steps · " << s.toolCount << " tools · " << s.totalTokens
-                  << " tokens · " << (s.costKnown ? fmtCost(s.costUsd) : "成本 n/a")
-                  << (s.incomplete ? " · ⚠ incomplete" : "") << "\n";
+                  << " tokens" << (s.incomplete ? " · ⚠ incomplete" : "") << "\n";
         for (const auto& m : s.missing) std::cout << "  ! " << m << "\n";
         std::cout << "  输出: " << s.runDir << "\n";
         std::cout << "  流程图: " << s.runDir << "\\graph.mmd\n";

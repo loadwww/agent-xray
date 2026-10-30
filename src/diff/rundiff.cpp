@@ -2,8 +2,6 @@
 
 #include <algorithm>
 
-#include "cost/pricing.h"
-
 namespace axr {
 namespace {
 
@@ -30,7 +28,7 @@ std::size_t countTools(const Run& run) {
     return n;
 }
 
-RunDiff diffRuns(const Run& base, const Run& cur, const PricingCfg& pricing) {
+RunDiff diffRuns(const Run& base, const Run& cur) {
     RunDiff d;
     d.baseSteps = static_cast<int>(base.steps.size());
     d.curSteps = static_cast<int>(cur.steps.size());
@@ -38,13 +36,6 @@ RunDiff diffRuns(const Run& base, const Run& cur, const PricingCfg& pricing) {
     d.curTools = static_cast<int>(countTools(cur));
     d.baseTokens = tokenCount(base);
     d.curTokens = tokenCount(cur);
-
-    const CostBreakdown cb = computeCost(base, pricing);
-    const CostBreakdown cc = computeCost(cur, pricing);
-    d.baseCost = cb.totalUsd;
-    d.curCost = cc.totalUsd;
-    d.baseCostKnown = cb.complete;
-    d.curCostKnown = cc.complete;
 
     const std::vector<int> baseStart = toolStarts(base);
     const std::vector<int> curStart = toolStarts(cur);

@@ -17,8 +17,6 @@ struct RunSummary {
     int requestCount = 0;
     int retryCount = 0;
     int totalTokens = 0;
-    double costUsd = 0.0;
-    bool costKnown = true;
     bool incomplete = false;
     std::vector<std::string> missing;
     std::string primaryModel;

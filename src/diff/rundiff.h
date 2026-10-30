@@ -3,7 +3,6 @@
 #include <string>
 #include <vector>
 
-#include "config/config.h"
 #include "parse/model.h"
 
 namespace axr {
@@ -36,10 +35,6 @@ struct RunDiff {
     int curTools = 0;
     int baseTokens = 0;
     int curTokens = 0;
-    double baseCost = 0;
-    double curCost = 0;
-    bool baseCostKnown = true;
-    bool curCostKnown = true;
     std::vector<StepDelta> steps;
     std::vector<ToolDelta> tools;
     std::vector<std::string> notes; // 缺失步骤 / 重试 / 模糊边等非结构性差异
@@ -49,7 +44,7 @@ struct RunDiff {
 
 std::size_t countTools(const Run& run);
 
-// 按 Step 序号对齐做差异；成本用当前单价表重算，避免两 run 计价口径不一致
-RunDiff diffRuns(const Run& base, const Run& cur, const PricingCfg& pricing);
+// 按 Step 序号对齐做差异
+RunDiff diffRuns(const Run& base, const Run& cur);
 
 } // namespace axr

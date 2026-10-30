@@ -2,10 +2,10 @@
 
 #include <chrono>
 #include <iostream>
+#include <set>
 #include <string>
 
 #include "cli/cli_common.h"
-#include "cost/pricing.h"
 #include "graph/timeline.h"
 #include "store/events_reader.h"
 
@@ -33,8 +33,7 @@ Status parseShowArgs(const std::vector<std::string>& args, ShowOpts& out) {
     return Status::Ok();
 }
 
-void printRun(const Run& run, const Config& cfg) {
-    const CostBreakdown cost = computeCost(run, cfg.pricing);
+void printRun(const Run& run) {
     int tools = 0;
     for (const auto& s : run.steps) tools += static_cast<int>(s.tools.size());
 
@@ -42,8 +41,18 @@ void printRun(const Run& run, const Config& cfg) {
     std::cout << "  状态: " << (run.incomplete ? "incomplete" : "complete") << " · 原始请求 "
               << run.requestCount << "（重试 " << run.retryCount << "）· Step " << run.steps.size() << " · 工具 "
               << tools << " · fuzzy " << run.fuzzyEdges << "\n";
-    std::cout << "  token: " << (run.total.promptTokens + run.total.completionTokens)
-              << " · 成本: " << (cost.complete ? fmtCost(cost.totalUsd) : "n/a") << "\n";
+    // 模型只打印一次（时间线表里不再逐行重复）；中途切换模型时会全部列在这里
+    std::set<std::string> models;
+    for (const auto& s : run.steps) {
+        if (!s.call.model.empty()) models.insert(s.call.model);
+    }
+    std::string modelText;
+    for (const auto& m : models) {
+        if (!modelText.empty()) modelText += ", ";
+        modelText += m;
+    }
+    std::cout << "  token: " << (run.total.promptTokens + run.total.completionTokens) << " · 模型: "
+              << (modelText.empty() ? "-" : modelText) << "\n";
     std::cout << "  时间: " << run.startedAt << " → " << run.endedAt << "\n";
     for (const auto& m : run.missing) std::cout << "  ! " << m << "\n";
 
@@ -92,7 +101,7 @@ int cmdShow(const std::vector<std::string>& args) {
         return 1;
     }
     for (const auto& r : chain.value.runs) {
-        printRun(r, cfg.value);
+        printRun(r);
         std::cout << "\n";
     }
     return 0;

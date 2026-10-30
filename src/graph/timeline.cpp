@@ -1,6 +1,7 @@
 #include "graph/timeline.h"
 
 #include <cstdio>
+#include <set>
 
 #include "common/time_util.h"
 
@@ -17,8 +18,16 @@ std::string fmtSec(int ms) {
 
 std::string toMarkdownTimeline(const Run& run) {
     const auto base = parseRfc3339(run.startedAt);
-    std::string out = "| # | 类型 | 模型 | 相对时间 | 耗时 | Token | 工具 |\n";
-    out += "|---|---|---|---|---|---|---|\n";
+    // 一次 run 内通常只有一个模型，重复打印没有信息量；只在模型真的发生切换时才保留「模型」列
+    std::set<std::string> names;
+    for (const auto& s : run.steps) {
+        if (!s.call.model.empty()) names.insert(s.call.model);
+    }
+    const bool showModel = names.size() > 1;
+
+    std::string out = showModel ? "| # | 类型 | 模型 | 相对时间 | 耗时 | Token | 工具 |\n"
+                                : "| # | 类型 | 相对时间 | 耗时 | Token | 工具 |\n";
+    out += showModel ? "|---|---|---|---|---|---|---|\n" : "|---|---|---|---|---|---|\n";
     for (std::size_t i = 0; i < run.steps.size(); ++i) {
         const Step& s = run.steps[i];
         std::string rel = "-";
@@ -33,8 +42,9 @@ std::string toMarkdownTimeline(const Run& run) {
             if (k) tools += ", ";
             tools += s.tools[k].name;
         }
-        out += "| " + std::to_string(i + 1) + " | " + s.kind + " | " + s.call.model + " | " + rel + " | " +
-               fmtSec(s.response.latencyMs) + " | " + std::to_string(s.tokens) + " | " +
+        out += "| " + std::to_string(i + 1) + " | " + s.kind + " |";
+        if (showModel) out += " " + s.call.model + " |";
+        out += " " + rel + " | " + fmtSec(s.response.latencyMs) + " | " + std::to_string(s.tokens) + " | " +
                (tools.empty() ? "-" : tools) + " |\n";
     }
     return out;

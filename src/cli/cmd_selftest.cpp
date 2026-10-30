@@ -16,7 +16,6 @@
 #include "common/hash.h"
 #include "common/log.h"
 #include "config/config.h"
-#include "cost/pricing.h"
 #include "diff/rundiff.h"
 #include "graph/mermaid.h"
 #include "proxy/event.h"
@@ -333,85 +332,6 @@ int mermaidNodeCount(const std::string& mmd) {
     return n;
 }
 
-void testM3Units(TestCtx& t) {
-    // pricing 配置：inline map / 块式 / default / 整段覆盖默认表
-    {
-        const std::string yaml = R"(
-proxy:
-  upstreams:
-    - match: "/v1"
-      url: "http://127.0.0.1:9099/v1"
-chain:
-  collapse_threshold: 12
-pricing:
-  deepseek-chat: { input: 0.14, output: 0.28 }
-  my-model:
-    input: 0.5
-    output: 1.5
-  default: { input: 1.00, output: 3.00 }
-)";
-        auto cfg = parseConfigText(yaml);
-        t.check(cfg.ok(), "M3 pricing 配置可解析");
-        if (cfg.ok()) {
-            auto it = cfg.value.pricing.models.find("deepseek-chat");
-            t.check(it != cfg.value.pricing.models.end() && std::abs(it->second.input - 0.14) < 1e-9,
-                    "M3 pricing inline map");
-            auto it2 = cfg.value.pricing.models.find("my-model");
-            t.check(it2 != cfg.value.pricing.models.end() && std::abs(it2->second.output - 1.5) < 1e-9,
-                    "M3 pricing 块式解析");
-            t.check(cfg.value.pricing.models.find("gpt-4o") == cfg.value.pricing.models.end(),
-                    "M3 pricing 覆盖默认单价表");
-            t.check(cfg.value.chain.collapseThreshold == 12, "M3 collapse_threshold 解析");
-        }
-    }
-
-    // 成本：与手算一致到 1e-6（§7.5 验收）
-    {
-        Run r;
-        r.steps.resize(2);
-        r.steps[0].call.model = "deepseek-chat";
-        r.steps[0].response.usage = Usage{1000, 500, 0};
-        r.steps[1].call.model = "deepseek-chat";
-        r.steps[1].response.usage = Usage{2000, 300, 0};
-        const CostBreakdown cb = computeCost(r, defaultConfig().pricing);
-        t.check(std::abs(cb.stepUsd[0] - 0.000280) < 1e-6, "M3 step0 成本手算一致");
-        t.check(std::abs(cb.stepUsd[1] - 0.000364) < 1e-6, "M3 step1 成本手算一致");
-        t.check(std::abs(cb.totalUsd - 0.000644) < 1e-6, "M3 总成本手算一致");
-        t.check(cb.complete && cb.hasUsage, "M3 usage 完整");
-        t.check(cb.byModel.count("deepseek-chat") == 1, "M3 按模型归因");
-    }
-
-    // cached token 按 input 的 1/10 计
-    {
-        Run r;
-        r.steps.resize(1);
-        r.steps[0].call.model = "deepseek-chat";
-        r.steps[0].response.usage = Usage{1000, 0, 1000};
-        const CostBreakdown cb = computeCost(r, defaultConfig().pricing);
-        t.check(std::abs(cb.stepUsd[0] - 1000.0 * 0.014 / 1000000.0) < 1e-9, "M3 cached token 1/10 计价");
-    }
-
-    // T9：usage 缺失 → n/a，不崩
-    {
-        Run r;
-        r.steps.resize(1);
-        r.steps[0].call.model = "deepseek-chat";
-        const CostBreakdown cb = computeCost(r, defaultConfig().pricing);
-        t.check(!cb.complete && !cb.stepKnown[0], "M3 无 usage 时成本标记 n/a");
-        t.check(fmtCost(0.0) == "$0.000000", "M3 成本格式化");
-    }
-
-    // 未知模型走 default 单价
-    {
-        Run r;
-        r.steps.resize(1);
-        r.steps[0].call.model = "unknown-model";
-        r.steps[0].response.usage = Usage{1000000, 0, 0};
-        const CostBreakdown cb = computeCost(r, defaultConfig().pricing);
-        t.check(std::abs(cb.stepUsd[0] - 1.00) < 1e-9, "M3 未知模型走 default 单价");
-    }
-}
-
 // M4 单元：run 差异 / run 目录索引 / 建链性能
 void testM4Units(TestCtx& t, const std::string& fixturesDir) {
     // ---- diff：新增 Step + T3 参数变化 ----
@@ -440,7 +360,7 @@ void testM4Units(TestCtx& t, const std::string& fixturesDir) {
         base.total = Usage{500, 50, 0};
         cur.total = Usage{650, 60, 0};
 
-        const RunDiff d = diffRuns(base, cur, defaultConfig().pricing);
+        const RunDiff d = diffRuns(base, cur);
         t.check(!d.empty(), "M4 diff 检测到差异");
         t.check(d.steps.size() == 3, "M4 diff 报出 S3 变化 + S4 变化（final→tool）+ 新增 S5");
         if (!d.steps.empty()) {
@@ -470,7 +390,7 @@ void testM4Units(TestCtx& t, const std::string& fixturesDir) {
         create_directories(oldRun);
         create_directories(newRun);
         writeTextFile((oldRun / "meta.json").string(),
-                      R"({"id":"20261001-090000-aaaa","started_at":"2026-10-01T09:00:00.000+08:00","status":"complete","step_count":4,"tool_count":3,"total_tokens":312,"cost_usd":0.000054,"cost_known":true,"models":["deepseek-chat"]})");
+                      R"({"id":"20261001-090000-aaaa","started_at":"2026-10-01T09:00:00.000+08:00","status":"complete","step_count":4,"tool_count":3,"total_tokens":312,"models":["deepseek-chat"]})");
         // newRun 故意不写 meta.json，走目录名推导
         last_write_time(oldRun, file_time_type::clock::now() - std::chrono::hours(24 * 10));
 
@@ -482,7 +402,7 @@ void testM4Units(TestCtx& t, const std::string& fixturesDir) {
             for (const auto& m : listed.value)
                 if (m.dirName == "20261001-090000-aaaa") oldMeta = &m;
             t.check(oldMeta != nullptr && oldMeta->hasMeta && oldMeta->stepCount == 4 &&
-                        std::abs(oldMeta->costUsd - 0.000054) < 1e-9,
+                        oldMeta->totalTokens == 312,
                     "M4 listRuns 解析 meta.json");
             t.check(oldMeta != nullptr && std::abs(oldMeta->ageDays - 10.0) < 1.0, "M4 listRuns 按 mtime 算年龄");
             bool derived = false;
@@ -656,7 +576,6 @@ int cmdSelftest(const std::vector<std::string>& args) {
     testHash(t);
     testModelRoundtrip(t);
     testM2Units(t);
-    testM3Units(t);
     testM4Units(t, dir);
     testWebUi(t, dir);
 
@@ -813,19 +732,22 @@ int cmdSelftest(const std::vector<std::string>& args) {
         t.check(mmd.find("「循环」") != std::string::npos, "M3 折叠节点出现在图上");
     });
 
-    // report.md：概览 / 流程图 / 时间线 / 工具表 / 成本表 / 缺失警告
+    // report.md：概览 / 流程图 / 时间线 / 工具表 / Token 用量表 / 缺失警告
     {
         auto chain = buildChainFromEvents(dir + "/t5_missing");
         if (chain.ok() && !chain.value.runs.empty()) {
             const Run& r = chain.value.runs[0];
-            const std::string rep = buildReport(r, computeCost(r, defaultConfig().pricing));
+            const std::string rep = buildReport(r);
             t.check(rep.find("⚠ 检测到缺失步骤") != std::string::npos, "M3 报告顶部有缺失警告");
             t.check(rep.find("## 执行流程") != std::string::npos && rep.find("```mermaid") != std::string::npos,
                     "M3 报告内嵌流程图");
             t.check(rep.find("## 时间线") != std::string::npos, "M3 报告含时间线");
             t.check(rep.find("## 工具调用") != std::string::npos, "M3 报告含工具调用表");
-            t.check(rep.find("## 成本") != std::string::npos && rep.find("Total:") != std::string::npos,
-                    "M3 报告含成本表与合计");
+            t.check(rep.find("## Token 用量") != std::string::npos && rep.find("Total:") != std::string::npos,
+                    "M3 报告含 Token 用量表与合计");
+            // 单模型 run 不再逐行重复模型名（上方概览已写一次），表头应无 Model 列
+            t.check(rep.find("| Step | Prompt | Completion | 合计 |") != std::string::npos,
+                    "M3 单模型报告的 Token 表不重复模型列");
         } else {
             t.check(false, "M3 报告夹具加载失败");
         }
@@ -836,8 +758,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
         auto baseChain = buildChainFromEvents(dir + "/t13_diff_base");
         auto curChain = buildChainFromEvents(dir + "/t13_diff_cur");
         if (baseChain.ok() && curChain.ok() && primaryRun(baseChain.value) && primaryRun(curChain.value)) {
-            const RunDiff d = diffRuns(*primaryRun(baseChain.value), *primaryRun(curChain.value),
-                                       defaultConfig().pricing);
+            const RunDiff d = diffRuns(*primaryRun(baseChain.value), *primaryRun(curChain.value));
             t.check(d.baseSteps == 5 && d.curSteps == 6, "M4 diff fixture 5 步 → 6 步");
             bool added5 = false, changed3 = false;
             for (const auto& s : d.steps) {

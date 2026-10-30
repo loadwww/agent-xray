@@ -8,7 +8,6 @@
 
 #include "chain/run.h"
 #include "common/time_util.h"
-#include "cost/pricing.h"
 #include "graph/mermaid.h"
 #include "store/events_reader.h"
 #include "store/run_index.h"
@@ -74,7 +73,7 @@ bool validRunId(const std::string& id) {
     return true;
 }
 
-nlohmann::json stepToJson(const Step& s, double cost, bool costKnown) {
+nlohmann::json stepToJson(const Step& s) {
     nlohmann::json j;
     j["index"] = s.index;
     j["kind"] = s.kind;
@@ -88,7 +87,6 @@ nlohmann::json stepToJson(const Step& s, double cost, bool costKnown) {
     j["completionTokens"] = s.response.usage.completionTokens;
     j["cachedTokens"] = s.response.usage.cachedTokens;
     j["tokens"] = s.tokens;
-    j["cost"] = costKnown ? fmtCost(cost) : std::string("n/a");
     j["error"] = s.response.err;
     j["text"] = trimText(s.response.text, 1200);
     int toolDefs = static_cast<int>(s.call.tools.size());
@@ -120,9 +118,6 @@ nlohmann::json stepToJson(const Step& s, double cost, bool costKnown) {
 }
 
 nlohmann::json runToJson(Run& run, const Config& cfg, bool live) {
-    applyCost(run, cfg.pricing);
-    const CostBreakdown cb = computeCost(run, cfg.pricing);
-
     MermaidOptions mo;
     mo.collapseThreshold = cfg.chain.collapseThreshold;
 
@@ -147,12 +142,6 @@ nlohmann::json runToJson(Run& run, const Config& cfg, bool live) {
                   {"completion", run.total.completionTokens},
                   {"cached", run.total.cachedTokens},
                   {"tokens", run.total.promptTokens + run.total.completionTokens}};
-    j["cost"] = cb.complete ? fmtCost(cb.totalUsd) : std::string("n/a");
-    j["costKnown"] = cb.complete;
-
-    nlohmann::json byModel = nlohmann::json::object();
-    for (const auto& kv : cb.byModel) byModel[kv.first] = fmtCost(kv.second);
-    j["byModel"] = byModel;
 
     nlohmann::json models = nlohmann::json::array();
     for (const auto& s : run.steps) {
@@ -162,11 +151,7 @@ nlohmann::json runToJson(Run& run, const Config& cfg, bool live) {
     j["models"] = models;
 
     nlohmann::json steps = nlohmann::json::array();
-    for (std::size_t i = 0; i < run.steps.size(); ++i) {
-        const bool known = cb.stepKnown.size() > i && cb.stepKnown[i];
-        const double usd = cb.stepUsd.size() > i ? cb.stepUsd[i] : 0.0;
-        steps.push_back(stepToJson(run.steps[i], usd, known));
-    }
+    for (const auto& s : run.steps) steps.push_back(stepToJson(s));
     j["steps"] = steps;
     j["mermaid"] = toMermaid(run, mo);
     j["collapseThreshold"] = cfg.chain.collapseThreshold;
@@ -183,8 +168,6 @@ nlohmann::json liveSummary(const std::string& runDir, const Config& cfg) {
     if (p == nullptr) return j;
 
     Run copy = *p;
-    applyCost(copy, cfg.pricing);
-    const CostBreakdown cb = computeCost(copy, cfg.pricing);
 
     int tools = 0;
     for (const auto& s : copy.steps) tools += static_cast<int>(s.tools.size());
@@ -195,7 +178,6 @@ nlohmann::json liveSummary(const std::string& runDir, const Config& cfg) {
     j["requests"] = copy.requestCount;
     j["retries"] = copy.retryCount;
     j["incomplete"] = copy.incomplete;
-    j["cost"] = cb.complete ? fmtCost(cb.totalUsd) : std::string("n/a");
     nlohmann::json models = nlohmann::json::array();
     for (const auto& s : copy.steps) {
         if (s.call.model.empty()) continue;
@@ -308,7 +290,7 @@ function renderList() {
     <div class="run-item ${r.id === selected ? 'active' : ''}" data-id="${esc(r.id)}">
       <div class="id">${esc(r.id)}${r.live ? ' <span class="tag live">' + esc(r.status) + '</span>' : ''}</div>
       <div class="meta">${esc(r.startedAt || '')} · ${r.steps} 步 · ${r.tools} 工具 · ${r.tokens} tok</div>
-      <div class="meta">${esc(r.cost || '')} · ${esc(r.status)}${r.incomplete ? ' · 不完整' : ''}${r.failTools ? ' · <span class="bad">' + r.failTools + ' 失败</span>' : ''}</div>
+      <div class="meta">${esc(r.status)}${r.incomplete ? ' · 不完整' : ''}${r.failTools ? ' · <span class="bad">' + r.failTools + ' 失败</span>' : ''}</div>
     </div>`).join('');
   listEl.querySelectorAll('.run-item').forEach(el => {
     el.onclick = () => { selected = el.dataset.id; lastKey = ''; renderList(); loadRun(); };
@@ -346,7 +328,6 @@ function chips(d) {
     ['Step', d.steps.length],
     ['请求', d.requestCount + '（重试 ' + d.retryCount + '）'],
     ['token', t + '（提示 ' + d.total.prompt + ' / 补全 ' + d.total.completion + '）'],
-    ['成本', d.cost],
     ['耗时', Math.round(d.durationMs / 1000) + 's'],
     ['模型', d.models.join(', ') || '-'],
     ['模糊边', d.fuzzyEdges],
@@ -359,6 +340,8 @@ function chips(d) {
 )HTML" R"HTML(function flowSvg(d) {
   const steps = d.steps.slice();
   if (!steps.length) return '<div class="empty">没有步骤</div>';
+  // 模型名只在顶部 chips 出现一次；节点上仅在"与主模型不同"（中途切模型 / fallback）时才标注
+  const mainModel = steps[0].model || '';
   const STEPW = 250, STEPH = 74, GAPY = 46, TOOLW = 280, TOOLH = 56, TGAP = 10, X2 = 330;
   const rows = []; let y = 0;
   steps.forEach(s => {
@@ -383,8 +366,10 @@ function chips(d) {
     const border = bad ? '#f85149' : (s.fuzzy ? '#d29922' : '#4c9aff');
     g += `<rect x="0" y="${row.y}" width="${STEPW}" height="${STEPH}" rx="10" fill="${bad ? '#20151a' : '#151c26'}" stroke="${border}" stroke-width="${bad ? 2 : 1.5}" ${s.fuzzy && !bad ? 'stroke-dasharray="6 4"' : ''}/>`;
     g += `<text x="12" y="${row.y + 22}" fill="#e6edf3" font-size="13" font-weight="600">Step ${i + 1}${bad ? ' · 受阻' : ''}</text>`;
-    g += `<text x="${STEPW - 10}" y="${row.y + 22}" text-anchor="end" fill="#8b98a9" font-size="11">${esc(s.model || '-')}</text>`;
-    g += `<text x="12" y="${row.y + 42}" fill="#8b98a9" font-size="11">${s.latencyMs}ms · ${s.tokens} tok · ${esc(s.cost)}${s.streamed ? ' · 流式' : ''}</text>`;
+    if (s.model && s.model !== mainModel) {
+      g += `<text x="${STEPW - 10}" y="${row.y + 22}" text-anchor="end" fill="#d29922" font-size="11">${esc(s.model)}</text>`;
+    }
+    g += `<text x="12" y="${row.y + 42}" fill="#8b98a9" font-size="11">${s.latencyMs}ms · ${s.tokens} tok${s.streamed ? ' · 流式' : ''}</text>`;
     g += `<text x="12" y="${row.y + 60}" fill="#8b98a9" font-size="11">${esc((s.finishReason || '') + ' · 消息 ' + s.messages + ' · 工具定义 ' + s.toolDefs)}</text>`;
     if (collapsed && s.tools.length) {
       g += `<text x="${STEPW - 10}" y="${row.y + 42}" text-anchor="end" fill="${s.failCount ? '#ff9d99' : '#3fb950'}" font-size="11">${s.tools.length} 工具${s.failCount ? ' · ' + s.failCount + ' 失败' : ''}</text>`;
@@ -470,22 +455,24 @@ function gantt(d) {
 }
 
 function stepsTable(d) {
+  // 单模型 run 不设「模型」列（chips 里已经写过一次）；中途切模型时才显示每步模型
+  const multi = (d.models || []).length > 1;
   const rows = d.steps.map((s, i) => `
     <tr>
       <td class="mono">${i + 1}</td>
-      <td class="mono">${esc(s.model || '-')}</td>
+      ${multi ? `<td class="mono">${esc(s.model || '-')}</td>` : ''}
       <td class="mono">${s.latencyMs}ms</td>
       <td class="mono">${s.promptTokens} / ${s.completionTokens}${s.cachedTokens ? ' / 缓存 ' + s.cachedTokens : ''}</td>
-      <td class="mono">${esc(s.cost)}</td>
       <td>${s.tools.map(t => `<span class="tag ${t.isError ? 'err' : ''}" title="${esc(t.isError ? (t.errorInferred ? '按结果文本推断为失败' : '协议标记失败') : '')}">${esc(t.name)} · ${t.durationMs}ms${t.isError ? ' · 失败' : ''}</span>`).join(' ') || '<span class="muted">-</span>'}</td>
       <td>${s.fuzzy ? '<span class="tag fuzzy">推测连接</span> ' : ''}${esc((s.text || '').replace(/\s+/g, ' ').slice(0, 90))}</td>
     </tr>`).join('');
-  return `<table><thead><tr><th>#</th><th>模型</th><th>耗时</th><th>token（提示/补全）</th><th>成本</th><th>工具</th><th>回复摘要</th></tr></thead><tbody>${rows}</tbody></table>`;
+  return `<table><thead><tr><th>#</th>${multi ? '<th>模型</th>' : ''}<th>耗时</th><th>token（提示/补全）</th><th>工具</th><th>回复摘要</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 function stepDetails(d) {
+  const multi = (d.models || []).length > 1;
   return d.steps.map((s, i) => `
-    <details class="step"><summary>Step ${i + 1} · ${esc(s.model || '-')} · ${esc((s.text || '').slice(0, 70).replace(/\s+/g, ' '))}</summary>
+    <details class="step"><summary>Step ${i + 1}${multi ? ' · ' + esc(s.model || '-') : ''} · ${esc((s.text || '').slice(0, 70).replace(/\s+/g, ' '))}</summary>
       <div>
         <div class="muted" style="margin-bottom:8px">${esc(s.endpoint)}</div>
         <pre>${esc(s.text || '(无文本)')}</pre>
@@ -550,7 +537,6 @@ WebResponse webUiRuns(const Config& cfg) {
         j["requests"] = m.requestCount;
         j["retries"] = m.retryCount;
         j["tokens"] = m.totalTokens;
-        j["cost"] = m.costKnown ? fmtCost(m.costUsd) : std::string("n/a");
         j["models"] = m.models;
         if (!m.hasMeta) {
             // 还在采集中（或 axr 被强杀、没来得及收尾）：现算，让侧栏有真实数值
@@ -580,7 +566,7 @@ WebResponse webUiRun(const Config& cfg, const std::string& id) {
     const std::string runDir = (std::filesystem::path(cfg.storage.root) / "runs" / id).string();
     if (!std::filesystem::is_directory(runDir)) return fail(404, "找不到 run: " + id);
 
-    // 已落盘：直接读 run.json（成本已写回，字段最全）
+    // 已落盘：直接读 run.json（字段最全）
     const std::string runJsonPath = (std::filesystem::path(runDir) / "run.json").string();
     const std::string raw = readAll(runJsonPath);
     if (!raw.empty()) {

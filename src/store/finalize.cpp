@@ -6,7 +6,6 @@
 #include "chain/run.h"
 #include "common/log.h"
 #include "common/time_util.h"
-#include "cost/pricing.h"
 #include "graph/mermaid.h"
 #include "store/events_reader.h"
 #include "store/run_dir.h"
@@ -31,8 +30,6 @@ void writeMeta(const std::string& runDir, const RunSummary& s, const Run* run, l
     m["request_count"] = s.requestCount;
     m["retry_count"] = s.retryCount;
     m["total_tokens"] = s.totalTokens;
-    m["cost_usd"] = run ? run->costUsd : 0.0;
-    m["cost_known"] = s.costKnown;
     if (run) m["fuzzy_edges"] = run->fuzzyEdges;
     nlohmann::json models = nlohmann::json::array();
     if (run) {
@@ -108,18 +105,14 @@ RunSummary finalizeRun(const std::string& runDir, const Config& cfg, long long d
     const auto t1 = parseRfc3339(primary->endedAt);
     if (t0.ok() && t1.ok()) durationMs = diffMillis(t1.value, t0.value);
 
-    // M3：成本 + 报告
+    // M3：报告
     MermaidOptions mo;
     mo.collapseThreshold = cfg.chain.collapseThreshold;
-    applyCost(*primary, cfg.pricing);
-    const CostBreakdown cost = computeCost(*primary, cfg.pricing);
-    s.costUsd = primary->costUsd;
-    s.costKnown = cost.complete;
     s.reportPath = joinPath(runDir, "report.md");
 
     writeTextFile(joinPath(runDir, "run.json"), nlohmann::json(*primary).dump(2));
     writeTextFile(joinPath(runDir, "graph.mmd"), toMermaid(*primary, mo));
-    writeTextFile(s.reportPath, buildReport(*primary, cost, mo));
+    writeTextFile(s.reportPath, buildReport(*primary, mo));
     writeMeta(runDir, s, primary, durationMs);
 
     logInfo("run", "分析完成: " + s.sessionId + " steps=" + std::to_string(s.stepCount) +

@@ -5,7 +5,6 @@
 
 #include "chain/run.h"
 #include "cli/cli_common.h"
-#include "cost/pricing.h"
 #include "diff/rundiff.h"
 #include "store/events_reader.h"
 
@@ -41,14 +40,10 @@ std::string clip(const std::string& s, std::size_t maxBytes = 60) {
     return s.substr(0, n) + "…";
 }
 
-std::string costText(bool known, double usd) {
-    return known ? fmtCost(usd) : std::string("n/a");
-}
-
-void printRunLine(const char* tag, const Run& run, bool costKnown, double cost) {
+void printRunLine(const char* tag, const Run& run) {
     std::cout << "  " << tag << ": " << run.id << " · " << run.steps.size() << " Step · "
               << countTools(run) << " 工具 · " << (run.total.promptTokens + run.total.completionTokens)
-              << " token · " << costText(costKnown, cost) << "\n";
+              << " token\n";
 }
 
 void printStepDelta(const StepDelta& d) {
@@ -129,11 +124,11 @@ int cmdDiff(const std::vector<std::string>& args) {
         return 1;
     }
 
-    const RunDiff d = diffRuns(*base, *cur, cfg.value.pricing);
+    const RunDiff d = diffRuns(*base, *cur);
 
     std::cout << "Run 对比\n";
-    printRunLine("base", *base, d.baseCostKnown, d.baseCost);
-    printRunLine("cur ", *cur, d.curCostKnown, d.curCost);
+    printRunLine("base", *base);
+    printRunLine("cur ", *cur);
     std::cout << "\n";
 
     if (d.empty()) {
@@ -149,16 +144,10 @@ int cmdDiff(const std::vector<std::string>& args) {
         }
     }
 
-    std::cout << "\n计费差异\n";
+    std::cout << "\n用量差异\n";
     const int dt = d.curTokens - d.baseTokens;
     std::cout << "  token " << d.baseTokens << " → " << d.curTokens << "（" << (dt > 0 ? "+" : "") << dt
-              << "）· 成本 " << costText(d.baseCostKnown, d.baseCost) << " → "
-              << costText(d.curCostKnown, d.curCost);
-    if (d.baseCostKnown && d.curCostKnown) {
-        const double dc = d.curCost - d.baseCost;
-        std::cout << "（" << (dc >= 0 ? "+" : "-") << fmtCost(dc >= 0 ? dc : -dc) << "）";
-    }
-    std::cout << "\n";
+              << "）\n";
 
     for (const auto& n : d.notes) std::cout << "  备注: " << n << "\n";
     return 0;

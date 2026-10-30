@@ -21,8 +21,6 @@ struct RunMeta {
     int requestCount = 0;
     int retryCount = 0;
     int totalTokens = 0;
-    double costUsd = 0.0;
-    bool costKnown = false;
     std::vector<std::string> models;
     std::string reportPath;
     double ageDays = 0.0; // 目录 mtime 距今天数

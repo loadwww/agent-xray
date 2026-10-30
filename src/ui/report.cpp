@@ -56,7 +56,7 @@ long long durationMs(const Run& run) {
 
 } // namespace
 
-std::string buildReport(const Run& run, const CostBreakdown& cost, const MermaidOptions& mo) {
+std::string buildReport(const Run& run, const MermaidOptions& mo) {
     std::string out;
     const int tokens = run.total.promptTokens + run.total.completionTokens;
     const int toolN = toolCount(run);
@@ -70,10 +70,9 @@ std::string buildReport(const Run& run, const CostBreakdown& cost, const Mermaid
         out += "\n";
     }
 
-    std::string costText = cost.complete ? fmtCost(cost.totalUsd) : "n/a（部分步骤无 usage）";
     out += "- 模型：" + modelsOf(run) + "\n";
     out += "- 步数：" + std::to_string(run.steps.size()) + "　工具调用：" + std::to_string(toolN) +
-           "　总 token：" + std::to_string(tokens) + "　成本：" + costText + "\n";
+           "　总 token：" + std::to_string(tokens) + "\n";
     out += "- 状态：" + std::string(run.incomplete ? "incomplete" : "complete") +
            "　耗时：" + fmtSec(durationMs(run)) + "\n";
     out += "- 原始请求：" + std::to_string(run.requestCount) + "　重试：" + std::to_string(run.retryCount) +
@@ -100,36 +99,29 @@ std::string buildReport(const Run& run, const CostBreakdown& cost, const Mermaid
         out += "\n";
     }
 
-    out += "## 成本\n\n";
-    out += "| Step | Model | Prompt | Completion | Cost | 占比 |\n|---|---|---|---|---|---|\n";
+    // 单模型 run 不再逐行重复模型名（上方概览已经写过一次），只有中途切模型时才保留该列
+    std::set<std::string> modelNames;
+    for (const auto& s : run.steps) {
+        if (!s.call.model.empty()) modelNames.insert(s.call.model);
+    }
+    const bool showModel = modelNames.size() > 1;
+
+    out += "## Token 用量\n\n";
+    out += showModel ? "| Step | Model | Prompt | Completion | 合计 |\n|---|---|---|---|---|\n"
+                     : "| Step | Prompt | Completion | 合计 |\n|---|---|---|---|\n";
     for (std::size_t i = 0; i < run.steps.size(); ++i) {
         const Step& s = run.steps[i];
-        const std::string c = cost.stepKnown[i] ? fmtCost(cost.stepUsd[i]) : "n/a";
-        const std::string pct = cost.totalUsd > 0 && cost.stepKnown[i]
-                                    ? std::to_string(static_cast<int>(100.0 * cost.stepUsd[i] / cost.totalUsd)) + "%"
-                                    : "-";
-        out += "| " + std::to_string(i + 1) + " | " + cell(s.call.model, 24) + " | " +
-               std::to_string(s.response.usage.promptTokens) + " | " +
-               std::to_string(s.response.usage.completionTokens) + " | " + c + " | " + pct + " |\n";
+        const int sum = s.response.usage.promptTokens + s.response.usage.completionTokens;
+        out += "| " + std::to_string(i + 1) + " |";
+        if (showModel) out += " " + cell(s.call.model, 24) + " |";
+        out += " " + std::to_string(s.response.usage.promptTokens) + " | " +
+               std::to_string(s.response.usage.completionTokens) + " | " + std::to_string(sum) + " |\n";
     }
-    out += "\nTotal: " + std::to_string(run.steps.size()) + " steps · " + std::to_string(tokens) + " tokens · " +
-           (cost.complete ? fmtCost(cost.totalUsd) : "n/a") + "\n\n";
-
-    if (!cost.byModel.empty()) {
-        out += "### 按模型\n\n| Model | Cost |\n|---|---|\n";
-        for (const auto& kv : cost.byModel) out += "| " + cell(kv.first, 24) + " | " + fmtCost(kv.second) + " |\n";
-        out += "\n";
-    }
-    if (!cost.byTool.empty()) {
-        out += "### 按工具（含触发它的 LLM 调用成本）\n\n| Tool | Cost |\n|---|---|\n";
-        for (const auto& kv : cost.byTool) out += "| " + cell(kv.first, 24) + " | " + fmtCost(kv.second) + " |\n";
-        out += "\n";
-    }
+    out += "\nTotal: " + std::to_string(run.steps.size()) + " steps · " + std::to_string(tokens) + " tokens\n\n";
 
     out += "## 备注\n\n";
     out += "- 工具耗时均为推断值（无 MCP 代理，标注 `~`）\n";
     if (run.fuzzyEdges > 0) out += "- 有 " + std::to_string(run.fuzzyEdges) + " 条模糊匹配边，图上虚线标注\"推测\"，非确定关系\n";
-    if (!cost.complete) out += "- 部分步骤上游未返回 usage，对应成本为 n/a\n";
     out += run.missing.empty() ? "- 未检测到数据缺失\n" : "- 检测到数据缺失，见顶部警告\n";
     return out;
 }

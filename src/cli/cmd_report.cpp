@@ -5,7 +5,6 @@
 #include <string>
 
 #include "cli/cli_common.h"
-#include "cost/pricing.h"
 #include "store/events_reader.h"
 #include "store/run_dir.h"
 #include "ui/report.h"
@@ -63,8 +62,7 @@ int cmdReport(const std::vector<std::string>& args) {
 
     MermaidOptions mo;
     mo.collapseThreshold = cfg.value.chain.collapseThreshold;
-    const CostBreakdown cost = computeCost(*run, cfg.value.pricing);
-    const std::string report = buildReport(*run, cost, mo);
+    const std::string report = buildReport(*run, mo);
 
     std::string outPath = opts.out;
     if (outPath.empty()) {
@@ -76,8 +74,8 @@ int cmdReport(const std::vector<std::string>& args) {
         return 1;
     }
     std::cout << "报告: " << outPath << "\n";
-    std::cout << "  run: " << run->id << " · " << run->steps.size() << " steps · " << (run->incomplete ? "incomplete" : "complete")
-              << " · " << (cost.complete ? fmtCost(cost.totalUsd) : "n/a") << "\n";
+    std::cout << "  run: " << run->id << " · " << run->steps.size() << " steps · "
+              << (run->incomplete ? "incomplete" : "complete") << "\n";
     return 0;
 }
 

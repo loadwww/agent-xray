@@ -165,7 +165,7 @@ void from_json(const nlohmann::json& j, ToolExec& t) {
 // ---------- Step ----------
 void to_json(nlohmann::json& j, const Step& s) {
     j = nlohmann::json{{"index", s.index}, {"call", s.call},   {"response", s.response},
-                       {"tools", s.tools}, {"tokens", s.tokens}, {"cost_usd", s.costUsd},
+                       {"tools", s.tools}, {"tokens", s.tokens},
                        {"kind", s.kind},   {"fuzzy_in", s.fuzzyIn}};
 }
 void from_json(const nlohmann::json& j, Step& s) {
@@ -177,7 +177,6 @@ void from_json(const nlohmann::json& j, Step& s) {
         for (const auto& item : j["tools"]) s.tools.push_back(item.get<ToolExec>());
     }
     s.tokens = valueOr<int>(j, "tokens", 0);
-    s.costUsd = valueOr<double>(j, "cost_usd", 0.0);
     s.kind = strOr(j, "kind");
     s.fuzzyIn = valueOr<bool>(j, "fuzzy_in", false);
 }
@@ -190,7 +189,6 @@ void to_json(nlohmann::json& j, const Run& r) {
                        {"ended_at", r.endedAt},
                        {"steps", r.steps},
                        {"total", r.total},
-                       {"cost_usd", r.costUsd},
                        {"incomplete", r.incomplete},
                        {"missing", r.missing},
                        {"children", r.children},
@@ -209,7 +207,6 @@ void from_json(const nlohmann::json& j, Run& r) {
         for (const auto& item : j["steps"]) r.steps.push_back(item.get<Step>());
     }
     if (j.contains("total") && j["total"].is_object()) r.total = j["total"].get<Usage>();
-    r.costUsd = valueOr<double>(j, "cost_usd", 0.0);
     r.incomplete = valueOr<bool>(j, "incomplete", false);
     r.missing.clear();
     if (j.contains("missing") && j["missing"].is_array()) {

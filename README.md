@@ -12,8 +12,8 @@ CLI 名 `axr`，C++17 单文件可执行程序，采集方式是本地反向代�
   「哪一步、哪个工具先出事」，而不是往代码里塞一堆 `print`。
 - **调试 / 复盘的人**：任务失败后要留下可回放的证据链（`events.jsonl` / `run.json` / `report.md`），
   能重放、能 diff 两次运行的差异。
-- **框架作者 / 研究者**：对比不同框架（AutoGPT、smolagents、手写脚本）在同一任务下的步数、token、
-  成本与工具并行结构。
+- **框架作者 / 研究者**：对比不同框架（AutoGPT、smolagents、手写脚本）在同一任务下的步数、
+  token 用量与工具并行结构。
 - **教学 / 演示**：把「Agent 内部到底发生了什么」变成一张可以按时间轴看下去的图。
 
 不需要接 SDK、不需要改 Agent 代码、不需要重新打包镜像 —— 只靠 `axr run` 注入的环境变量接入。
@@ -47,14 +47,14 @@ http://127.0.0.1:8080/__xray?id=<runID>&collapse=1  # 默认折叠工具调用
   也可用 `?collapse=1` 默认折叠。
 - **耗时甘特图**：页面顶部给出整个 run 的总耗时、每步 LLM 调用的时间片、同名工具合并后的并行条，
   以及步骤之间的空隙（等待工具回调 / 空闲），直观看出哪些工具是并行的。
-- **步骤明细表**：每步的模型、耗时、token、成本与工具参数 / 结果（失败行标红），可展开完整回复；
+- **步骤明细表**：每步的耗时、token 与工具参数 / 结果（失败行标红），可展开完整回复；
   另有可复制的 Mermaid 源码，粘到 mermaid.live 看官方渲染版。
 
 两个 JSON 接口（给脚本消费）：
 
 ```
-GET /__xray/api/runs         # run 列表（含 steps / tools / failTools / tokens / cost / live）
-GET /__xray/api/run?id=<id>  # 单个 run：steps / 成本 / failTools / 甘特图所需时间字段 / mermaid 源码
+GET /__xray/api/runs         # run 列表（含 steps / tools / failTools / tokens / live）
+GET /__xray/api/run?id=<id>  # 单个 run：steps / token / failTools / 甘特图所需时间字段 / mermaid 源码
 ```
 
 ## 部署方式（Windows）
@@ -71,7 +71,7 @@ irm https://raw.githubusercontent.com/loadwww/agent-xray/master/scripts/install.
 $env:OPENAI_API_KEY = "<你的 key>"
 axr run -- python your_agent.py     # 起代理 + 注入 OPENAI_BASE_URL + 跑完自动收尾
 axr serve --listen 8080             # 或常驻代理，浏览器打开 127.0.0.1:8080/__xray
-axr show <runID>                    # 终端看步骤 / token / 成本
+axr show <runID>                    # 终端看步骤 / token / 工具扇出
 ```
 
 ### 方式二：从源码构建
@@ -85,7 +85,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 脚本会自动定位 MSVC、Windows SDK 与 VS 自带的 CMake/Ninja，产物为 `build\axr.exe`
 （静态 CRT，单文件，只依赖系统 `WINHTTP/KERNEL32/WS2_32`）。
 
-一键回归（构建 + 187 条自检）：
+一键回归（构建 + 174 条自检）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tests\run_tests.ps1
@@ -103,7 +103,7 @@ powershell -ExecutionPolicy Bypass -File tests\e2e_proxy.ps1
 
 ```powershell
 # M1：离线回放与自检
-build\axr.exe selftest                                  # 187 条断言：hash / model / SSE / 链 / fuzzy / 配置 / 路由 / 脱敏 / 录制 / 成本 / 报告 / diff / prune / model_map / Web UI
+build\axr.exe selftest                                  # 174 条断言：hash / model / SSE / 链 / fuzzy / 配置 / 路由 / 脱敏 / 录制 / 报告 / diff / prune / model_map / Web UI
 build\axr.exe replay tests\fixtures\deepseek_tool_2 --format mermaid --out build\graph.mmd
 build\axr.exe replay tests\fixtures\t2_single_tool --format json
 
@@ -113,7 +113,7 @@ build\axr.exe run -- python my_agent.py                         # 起代理 + �
 build\axr.exe run --config tests\proxy_test.yaml -- python tests\fake_agent.py
 
 # M3：分析质量
-build\axr.exe show tests\fixtures\t12_long_chain               # 终端摘要：请求数/重试/步数/成本/时间线/工具扇出
+build\axr.exe show tests\fixtures\t12_long_chain               # 终端摘要：请求数/重试/步数/token/时间线/工具扇出
 build\axr.exe report tests\fixtures\t7_fuzzy --out build\r.md  # 生成 Markdown 报告（默认写到 events.jsonl 同目录 report.md）
 
 # M4：工程化
@@ -185,7 +185,7 @@ body 中 `sk-...` 形态密钥按正则替换；原始请求照常转发，不�
 
 ### 补全流式 usage（`inject_usage`）
 
-OpenAI 协议下流式响应默认不带 `usage`，这样每步 token / 成本都算不出来。可选开启改写：
+OpenAI 协议下流式响应默认不带 `usage`，这样每步 token 就是空的。可选开启改写：
 
 ```yaml
 proxy:
@@ -199,26 +199,14 @@ proxy:
 ## M3 分析质量
 
 每次收尾除 `run.json` / `graph.mmd` / `meta.json` 外还会写 `report.md`，
-包含概览、执行流程、时间线、工具调用表、成本表（含按模型 / 按工具归因）与备注。
+包含概览、执行流程、时间线、工具调用表、Token 用量与备注。
 
-成本按 `config.yaml` 的 `pricing` 段计价（USD / 1M tokens，cached 默认取 input 的 1/10）：
+token 一律是**真实值**：直接取上游响应里的 `usage`（`prompt_tokens` / `completion_tokens`，
+DeepSeek 的 `prompt_cache_hit_tokens` 落到 `cached_tokens`），不估算、不补齐。响应里没有 `usage`
+时该步就显示 `-` / 0，不会拿字数反推。流式场景请开 `proxy.inject_usage`（见上一节）让上游回传 usage。
 
-```yaml
-pricing:
-  # DeepSeek 官方按峰/谷两档计价，这里取峰值价保守估算（谷值为其 1/2）
-  deepseek-flash:    { input: 0.30, output: 1.20, cached: 0.006 }
-  deepseek-v4-pro:   { input: 1.32, output: 3.96, cached: 0.044 }
-  deepseek-chat:     { input: 0.14, output: 0.28 }
-  deepseek-reasoner: { input: 0.55, output: 2.20 }
-  gpt-4o:            { input: 2.50, output: 10.00 }
-  default:           { input: 1.00, output: 3.00 }   # 未列出的模型走这里
-```
-
-DeepSeek 的 `prompt_cache_hit_tokens` 会写入 `Usage.cachedTokens`，按 `cached` 单价单独计费
-（上例 `$0.000402` 即两步 2176 个缓存命中 token 的实测结果）。
-
-该段一旦出现即整段覆盖内建单价表（未列出的模型回落到 `default`）。
-响应里没有 `usage` 的步骤成本记为 `n/a`，不会被当成 0 计入合计。
+本工具**不显示金额**：上游 API 不返回每次调用的账单，任何"成本"都只能按单价表估算，属于编造数据。
+需要金额时请用服务商的用量后台，或用 token 数乘以你自己的单价。
 
 图与报告的几处标注：
 
@@ -229,18 +217,18 @@ DeepSeek 的 `prompt_cache_hit_tokens` 会写入 `Usage.cachedTokens`，按 `cac
 - **步骤数 < 原始请求数**：重试请求（与前一条完全重复）不计入 Step，只累加 `原始请求 / 重试` 计数。
   因此 `axr show` 会打印 `原始请求 N（重试 R）· Step S`，S 可能小于 N。
 
-`axr show <目录|runID>` 打印终端摘要（状态、token / 成本、时间线、工具扇出）；
+`axr show <目录|runID>` 打印终端摘要（状态、token / 模型 / 时间线 / 工具扇出）；
 `axr report <目录|runID> [--out 路径]` 生成 Markdown 报告，默认写到 `events.jsonl` 所在目录。
 
 ## M4 工程化
 
 - `axr list`：扫描 `<root>/runs/*`，优先读 `meta.json`；没有 meta 的目录用目录名推导时间并标"无 meta"。
-  `--json` 输出数组，字段固定（`dir/id/started_at/status/step_count/tool_count/fail_tools/total_tokens/cost_usd/...`）。
-- `axr export`：`--format json` 输出与 `run.json` 同构的 Run（含每步 `cost_usd`）；
+  `--json` 输出数组，字段固定（`dir/id/started_at/status/step_count/tool_count/fail_tools/total_tokens/...`）。
+- `axr export`：`--format json` 输出与 `run.json` 同构的 Run（每步含 `tokens` 与 usage）；
   `--format mermaid` 与 `graph.mmd` 同源（含折叠与模糊边规则）。
 - `axr diff`：两个 run 按 **Step 序号对齐**，工具按出现顺序全局编号 `T0、T1…`，输出
   新增/删除的 Step、Step 内字段变化（模型 / token / kind / 工具）、以及工具级"参数变化 / 结果变化"，
-  最后给出 token 与成本差值。示例：
+  最后给出 token 差值。示例：
 
   ```text
   步骤差异
@@ -275,14 +263,14 @@ flowchart TD
     T0_0 --> S1
 ```
 
-| Step | Model | Prompt | Completion | Cost | 占比 |
-|---|---|---|---|---|---|
-| 1 | deepseek-chat | 50 | 20 | $0.000013 | 23% |
-| 2 | deepseek-chat | 50 | 20 | $0.000013 | 23% |
-| 3 | deepseek-chat | 50 | 20 | $0.000013 | 23% |
-| 4 | deepseek-chat | 90 | 12 | $0.000016 | 29% |
+| Step | Prompt | Completion | 合计 |
+|---|---|---|---|
+| 1 | 50 | 20 | 70 |
+| 2 | 50 | 20 | 70 |
+| 3 | 50 | 20 | 70 |
+| 4 | 90 | 12 | 102 |
 
-Total: 4 steps · 312 tokens · $0.000054
+Total: 4 steps · 312 tokens
 
 ## 真实 agent 对照测试（smolagents + DeepSeek）
 
@@ -298,7 +286,7 @@ $env:OPENAI_API_KEY = "<deepseek key>"
 .\build\axr.exe run -- D:\env\agents\smolagents-venv\Scripts\python.exe D:\agents\smolagents-demo\agent.py
 ```
 
-实测结果（`20261030-191815-79c7`）：`2 steps · 2 tools · 2851 tokens · $0.000402`，`status=complete`。
+实测结果（`20261030-191815-79c7`）：`2 steps · 2 tools · 2851 tokens`，`status=complete`。
 
 ```mermaid
 flowchart TD
@@ -313,12 +301,12 @@ flowchart TD
     T0_1 --> S1
 ```
 
-| Step | Model | Prompt | Completion | Cost | 占比 |
-|---|---|---|---|---|---|
-| 1 | deepseek-flash | 1231（缓存 1024） | 88 | $0.000174 | 43% |
-| 2 | deepseek-flash | 1413（缓存 1152） | 119 | $0.000228 | 56% |
+| Step | Prompt（缓存命中） | Completion | 合计 |
+|---|---|---|---|
+| 1 | 1231（1024） | 88 | 1319 |
+| 2 | 1413（1152） | 119 | 1532 |
 
-Total: 2 steps · 2851 tokens · $0.000402
+Total: 2 steps · 2851 tokens
 
 真实流量暴露并修复的三个兼容问题：
 
@@ -351,7 +339,8 @@ Total: 2 steps · 2851 tokens · $0.000402
   messages 序列时仍可能误判。本期策略是把可疑的分支切成独立 run，不展开 run 树。
 - **无状态客户端（每轮全量重发）**：前缀哈希天然更准，是优势场景；反之只追加增量的客户端需要模糊匹配兜底，
   图中对应边会标注"推测"。
-- **一次 run 内换模型（fallback）**：前缀仍成立，只是各 Step 的 `model` 不同，成本按各步模型分别归因。
+- **一次 run 内换模型（fallback）**：前缀仍成立，只是各 Step 的 `model` 不同；界面默认只显示一次模型名，
+  中途切换时才在对应 Step 上单独标注。
 - **工具结果来自文本回填**：如 smolagents 用 `Observation:` 文本回填时，工具结果内容无法回填（详见上一节）。
 - **超大请求体（T10）**：`proxy.max_body_bytes` 超限时由 httplib 在读 body 阶段直接回 413，
   代理拿不到完整请求，因此**不产生 `req` / `err` 事件**；这是一处刻意的"宁可少记也不占内存"取舍。
@@ -361,7 +350,14 @@ Total: 2 steps · 2851 tokens · $0.000402
 - [x] 阶段 0：环境搭建（MSVC 14.41 / WinSDK 10.0.22621 / CMake 3.29.5 / Ninja 1.11）
 - [x] 阶段 1（M1）：离线闭环 — mock fixture → parse → chain → mermaid
 - [x] 阶段 2（M2）：真流量接入（反向代理 + 录制 + `axr run`）
-- [x] 阶段 3（M3）：分析质量（superstep / fuzzy / validate / cost / report）
+- [x] 阶段 3（M3）：分析质量（superstep / fuzzy / validate / report）
 - [x] 阶段 4（M4）：工程化（diff / prune / list / export / 性能 / 单文件打包）
 - [x] 阶段 5：真实 agent 对照（smolagents + DeepSeek 真流量，2 步 / 2 工具 / complete）
 - [x] 阶段 6：Web UI（内嵌页面 / 实时渲染 / 异常标红 / 折叠 / 耗时甘特图 / 深链）
+
+## 待办（Roadmap）
+
+- [ ] **本地模型部署支持**（Ollama / llama.cpp / vLLM / LM Studio 等 OpenAI 兼容服务）。
+      目标用法：`axr run --local ollama -- python agent.py`（自动把 `/v1` 指向 `http://127.0.0.1:11434/v1`、
+      跳过 API key 校验），`axr serve` 增加 `--local` 参数；本地服务不回 `usage` 时先尝试补
+      `stream_options.include_usage`，仍拿不到就把 token 标为「未观测」，不估算。

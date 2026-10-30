@@ -31,19 +31,6 @@ chain:
   fuzzy_window: 20
   collapse_threshold: 12   # 步骤超过该值时，中间连续"带工具步骤"折叠成循环块
 
-# 单价表（USD / 1M tokens，§7.5）；未知模型走 default
-# DeepSeek 按峰/谷两档计价（官方 2026-10 口径），此处统一取峰值价保守估算：
-#   deepseek-flash  谷值 input 0.15 / cached 0.003 / output 0.60
-#   deepseek-v4-pro 谷值 input 0.66 / cached 0.022 / output 1.98
-pricing:
-  deepseek-flash:       { input: 0.30, output: 1.20, cached: 0.006 }
-  deepseek-v4-pro:      { input: 1.32, output: 3.96, cached: 0.044 }
-  deepseek-chat:        { input: 0.14, output: 0.28 }
-  deepseek-reasoner:    { input: 0.55, output: 2.20 }
-  gpt-4o:               { input: 2.50, output: 10.00 }
-  gpt-4o-mini:          { input: 0.15, output: 0.60 }
-  default:              { input: 1.00, output: 3.00 }
-
 redact:
   headers:
     - authorization
