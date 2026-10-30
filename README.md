@@ -70,7 +70,7 @@ GET /__xray/api/run?id=<id>  # 单个 run 的步骤 / 成本 / mermaid 源码
 
 ```powershell
 # M1：离线回放与自检
-build\axr.exe selftest                                  # 151 条断言：hash / model / SSE / 链 / fuzzy / 配置 / 路由 / 脱敏 / 录制 / 成本 / 报告 / diff / prune
+build\axr.exe selftest                                  # 174 条断言：hash / model / SSE / 链 / fuzzy / 配置 / 路由 / 脱敏 / 录制 / 成本 / 报告 / diff / prune / model_map / Web UI
 build\axr.exe replay tests\fixtures\deepseek_tool_2 --format mermaid --out build\graph.mmd
 build\axr.exe replay tests\fixtures\t2_single_tool --format json
 
