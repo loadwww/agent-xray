@@ -7,20 +7,22 @@
 $ErrorActionPreference = "Stop"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-$repo = "loadwww/agent-xray"
-$headers = @{ "User-Agent" = "axr-installer" }
-
-Write-Host "[install] 查询最新版本..."
-$rel = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -Headers $headers
-$asset = $rel.assets | Where-Object { $_.name -eq "axr.exe" } | Select-Object -First 1
-if (-not $asset) { throw "最新 Release（$($rel.tag_name)）里没有 axr.exe 资产" }
+# 直连 releases/latest/download，不经过 api.github.com（避免匿名 API 限流）
+$url = "https://github.com/loadwww/agent-xray/releases/latest/download/axr.exe"
 
 $dir = Join-Path $env:LOCALAPPDATA "Programs\axr"
 $dst = Join-Path $dir "axr.exe"
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
-Write-Host "[install] 下载 $($rel.tag_name) -> $dst"
-Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $dst -UseBasicParsing -Headers $headers
+Write-Host "[install] 下载 -> $dst"
+try {
+    Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing
+} catch {
+    throw "下载失败（可能还没有 Release 或网络不可达）：$url`n$($_.Exception.Message)"
+}
+
+$head = [System.IO.File]::ReadAllBytes($dst)[0..1]
+if (-not ($head[0] -eq 0x4D -and $head[1] -eq 0x5A)) { throw "下载内容不是可执行文件（可能被拦截或重定向到 HTML）" }
 
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if ($userPath -notlike "*$dir*") {
@@ -34,3 +36,4 @@ Write-Host ""
 Write-Host "安装完成。用法示例:"
 Write-Host "  `$env:OPENAI_API_KEY = '<你的 key>'"
 Write-Host "  axr run -- python your_agent.py"
+Write-Host "  axr show <runID>"
