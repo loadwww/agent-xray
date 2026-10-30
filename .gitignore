@@ -1,0 +1,35 @@
+# ---- 构建产物 ----
+build/
+out/
+*.obj
+*.ilk
+*.pdb
+*.exe
+*.lib
+*.exp
+*.dll
+
+# ---- CMake ----
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# ---- 录制数据（可能含对话内容，禁止入库） ----
+runs/
+*.xray/
+.events.jsonl
+
+# ---- 编辑器 / 系统 ----
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ---- 临时 ----
+tmp/
+*.log
