@@ -41,6 +41,7 @@ void readMetaFile(const std::string& metaPath, RunMeta& m) {
     m.incomplete = j.value("incomplete", false);
     m.stepCount = j.value("step_count", 0);
     m.toolCount = j.value("tool_count", 0);
+    m.failTools = j.value("fail_tools", 0);
     m.requestCount = j.value("request_count", 0);
     m.retryCount = j.value("retry_count", 0);
     m.totalTokens = j.value("total_tokens", 0);
@@ -89,7 +90,15 @@ Result<std::vector<RunMeta>> listRuns(const std::string& root) {
         out.push_back(std::move(m));
     }
     std::sort(out.begin(), out.end(), [](const RunMeta& a, const RunMeta& b) {
-        if (a.startedAt != b.startedAt) return a.startedAt > b.startedAt;
+        // meta 里是 2026-10-30T20:43:57.277+08:00，无 meta 时按目录名推导成 2026-10-30 21:18:10。
+        // 两种格式直接比会把空格（0x20）排在 T 前面，需先统一成 T 再比较。
+        auto key = [](const std::string& t) {
+            std::string s = t;
+            if (s.size() > 10 && s[10] == ' ') s[10] = 'T';
+            return s;
+        };
+        const std::string ka = key(a.startedAt), kb = key(b.startedAt);
+        if (ka != kb) return ka > kb;
         return a.dirName > b.dirName;
     });
     return Result<std::vector<RunMeta>>::Ok(std::move(out));

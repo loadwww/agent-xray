@@ -576,6 +576,69 @@ void testWebUi(TestCtx& t, const std::string& fixturesDir) {
     t.check(d.contains("mermaid") && d["mermaid"].get<std::string>().find("flowchart") != std::string::npos,
             "UI run 明细含 mermaid 源码");
     t.check(d.contains("total") && d["total"]["tokens"].get<int>() > 0, "UI run 明细含 token 汇总");
+    t.check(d.contains("failTools") && d["failTools"].get<int>() == 0, "UI run 明细含失败工具计数");
+    t.check(d.contains("collapseThreshold"), "UI run 明细带折叠阈值");
+    t.check(webUiPage().body.find("折叠工具调用") != std::string::npos, "UI 页面有折叠/展开工具按钮");
+    t.check(webUiPage().body.find("时间线") != std::string::npos, "UI 页面有全局时间线（甘特图）");
+
+    // 采集中（没有 meta.json）也要在侧栏给出真实数值
+    if (list.is_array() && !list.empty()) {
+        t.check(list[0]["live"].get<bool>(), "UI runs 标记采集中");
+        t.check(list[0]["steps"].get<int>() > 0, "UI runs 对未收尾 run 现算步数");
+        t.check(list[0]["status"].get<std::string>() == "采集中" ||
+                    list[0]["status"].get<std::string>() == "未收尾",
+                "UI runs 未收尾 run 有明确状态");
+    }
+
+    // 失败工具高亮：上游没标 is_error，但结果文本里有 403 → 也要标红
+    {
+        const std::filesystem::path errDir = tmp / "runs" / "20261030-121500-errr";
+        std::filesystem::create_directories(errDir);
+        Run r;
+        r.id = "20261030-121500-errr";
+        r.startedAt = "2026-10-30T12:15:00.000+08:00";
+        r.endedAt = "2026-10-30T12:15:20.000+08:00";
+        LLMCall call;
+        call.model = "deepseek-chat";
+        call.endpoint = "https://api.deepseek.com/v1/chat/completions";
+        LLMResponse resp;
+        resp.text = "let me search";
+        resp.usage = Usage{100, 20, 0};
+        resp.finishReason = "tool_calls";
+        resp.latencyMs = 1500;
+        ToolExec te;
+        te.callId = "call_e";
+        te.name = "web_search";
+        te.arguments = R"({"query":"ai news"})";
+        te.result = "Error: Error code: 403 Forbidden - web access denied";
+        te.isError = false; // 协议层没标，靠文本兜底
+        te.durationMs = 900;
+        ToolExec te2;
+        te2.callId = "call_f";
+        te2.name = "read_webpage";
+        te2.arguments = R"({"url":"https://example.com"})";
+        te2.result = "read_webpage: Failed to read webpage: Failed to launch browser: Executable doesn't exist";
+        te2.isError = false;
+        te2.durationMs = 1200;
+        Step s;
+        s.index = 0;
+        s.call = call;
+        s.response = resp;
+        s.tools = {te, te2};
+        s.tokens = 120;
+        s.kind = "llm";
+        r.steps = {s};
+        writeTextFile((errDir / "run.json").string(), nlohmann::json(r).dump(2));
+
+        auto d3 = webUiRun(cfg, "20261030-121500-errr");
+        auto j3 = nlohmann::json::parse(d3.body, nullptr, false);
+        t.check(d3.status == 200 && j3.contains("failTools"), "UI 失败 run 明细可读");
+        t.check(j3["failTools"].get<int>() == 2, "UI 403 / Failed to 结果都计入失败工具");
+        t.check(j3["steps"][0]["hasError"].get<bool>(), "UI 含失败工具的 Step 标记 hasError");
+        t.check(j3["steps"][0]["tools"][0]["isError"].get<bool>(), "UI 403 工具标记为失败");
+        t.check(j3["steps"][0]["tools"][0]["errorInferred"].get<bool>(), "UI 403 工具标记为文本推断");
+        t.check(j3["steps"][0]["tools"][1]["isError"].get<bool>(), "UI Failed to 工具标记为失败");
+    }
 
     t.check(webUiRun(cfg, "../etc").status == 400, "UI run 拒绝路径穿越 id");
     t.check(webUiRun(cfg, "nope").status == 404, "UI run 未知 id 返回 404");

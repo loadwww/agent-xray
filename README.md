@@ -1,26 +1,82 @@
 # AgentXray
 
-零改造 Agent 执行流程逆向与可视化系统。CLI 名：`axr`。实现语言：C++17，采集模式：Mode A（反向代理）。
+**一台给 Agent 用的 X 光机：不改一行 Agent 代码，也能看清它每一步在想什么、调了哪个工具、在哪一步卡住了。**
 
-> 完整施工规格见 [docs/agent-xray-design.md](docs/agent-xray-design.md)。
+CLI 名 `axr`，C++17 单文件可执行程序，采集方式是本地反向代理（Mode A）：你照常启动自己的 Agent，
+它把每一轮请求 / 响应（含 SSE 分片）录进 `events.jsonl`，还原成「主模型思考链路 + 工具调用扇出」的流程图，
+并在浏览器里**边跑边渲染**。
 
-## 快速开始（Windows）
+## 它面向谁
 
-**方式一：下载预编译（无需编译）**
+- **Agent 开发者**：脚本跑歪了（工具返回 403、上下文爆炸、死循环、工具结果被吞），想一眼看到
+  「哪一步、哪个工具先出事」，而不是往代码里塞一堆 `print`。
+- **调试 / 复盘的人**：任务失败后要留下可回放的证据链（`events.jsonl` / `run.json` / `report.md`），
+  能重放、能 diff 两次运行的差异。
+- **框架作者 / 研究者**：对比不同框架（AutoGPT、smolagents、手写脚本）在同一任务下的步数、token、
+  成本与工具并行结构。
+- **教学 / 演示**：把「Agent 内部到底发生了什么」变成一张可以按时间轴看下去的图。
+
+不需要接 SDK、不需要改 Agent 代码、不需要重新打包镜像 —— 只靠 `axr run` 注入的环境变量接入。
+
+## 实际长什么样
+
+![AgentXray Web UI](docs/webui.png)
+
+> 真实 AutoGPT 任务（14 步 / 24 次工具调用）。Step 8 的 `read_webpage ×3`、Step 9 的 `http_get ×8`
+> 全部失败或被拒，自动标红，页面顶部提示「最早出现在 Step 8」；顶部甘特图给出总耗时与工具的并行关系。
+> 一键折叠后只看主模型链路：[折叠视图](docs/webui-collapsed.png)（对应 `?collapse=1`）。
+
+页面完全内嵌在 `axr.exe` 里（无 CDN、无需联网）。起代理后浏览器直接打开：
+
+```
+http://127.0.0.1:8080/__xray                        # 页面（左侧 run 列表 + 右侧流程图）
+http://127.0.0.1:8080/__xray?id=<runID>             # 直接定位某次 run
+http://127.0.0.1:8080/__xray?id=<runID>&collapse=1  # 默认折叠工具调用
+```
+
+浏览器访问根路径 `http://127.0.0.1:8080/` 也会返回页面（仅当 `Accept: text/html`，API 客户端的 `GET /` 仍照常转发）。
+
+页面能力：
+
+- **运行中实时渲染**：采集中的 run 每 3 秒刷新，直接读 `events.jsonl` 现建链，跑长任务时不用等结束；
+  侧栏对未收尾的 run 也会现算步数 / token / 失败数，状态显示「采集中」。
+- **异常节点标红**：工具结果带 `Error` / `403` / `Forbidden` / `Failed to` / `too much output` 等特征时
+  （协议层没给 `is_error` 就按文本兜底）标红；受挫的 Step 边框变红并标注「受阻」，顶部横幅给出失败总数
+  与最早出现的 Step，侧栏该 run 也会带「N 失败」徽标。
+- **折叠 / 展开**：header 右侧按钮一键隐藏全部工具分支，只看主模型思考链路（等价于 `.mmd` 的骨架）；
+  也可用 `?collapse=1` 默认折叠。
+- **耗时甘特图**：页面顶部给出整个 run 的总耗时、每步 LLM 调用的时间片、同名工具合并后的并行条，
+  以及步骤之间的空隙（等待工具回调 / 空闲），直观看出哪些工具是并行的。
+- **步骤明细表**：每步的模型、耗时、token、成本与工具参数 / 结果（失败行标红），可展开完整回复；
+  另有可复制的 Mermaid 源码，粘到 mermaid.live 看官方渲染版。
+
+两个 JSON 接口（给脚本消费）：
+
+```
+GET /__xray/api/runs         # run 列表（含 steps / tools / failTools / tokens / cost / live）
+GET /__xray/api/run?id=<id>  # 单个 run：steps / 成本 / failTools / 甘特图所需时间字段 / mermaid 源码
+```
+
+## 部署方式（Windows）
+
+### 方式一：一键安装（推荐，无需编译）
 
 ```powershell
 irm https://raw.githubusercontent.com/loadwww/agent-xray/master/scripts/install.ps1 | iex
 ```
 
-下载最新的 `axr.exe` 到 `%LOCALAPPDATA%\Programs\axr` 并加入用户 PATH，然后：
+把最新的 `axr.exe` 下载到 `%LOCALAPPDATA%\Programs\axr` 并加入用户 PATH，然后：
 
 ```powershell
 $env:OPENAI_API_KEY = "<你的 key>"
-axr run -- python your_agent.py     # 自动起代理、注入 OPENAI_BASE_URL、跑完自动收尾
-axr show <runID>                    # 看步骤 / token / 成本
+axr run -- python your_agent.py     # 起代理 + 注入 OPENAI_BASE_URL + 跑完自动收尾
+axr serve --listen 8080             # 或常驻代理，浏览器打开 127.0.0.1:8080/__xray
+axr show <runID>                    # 终端看步骤 / token / 成本
 ```
 
-**方式二：从源码构建**（需要 VS 2022 或 Build Tools，勾选「使用 C++ 的桌面开发」）
+### 方式二：从源码构建
+
+需要 VS 2022 或 Build Tools（勾选「使用 C++ 的桌面开发」）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1
@@ -29,48 +85,25 @@ powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 脚本会自动定位 MSVC、Windows SDK 与 VS 自带的 CMake/Ninja，产物为 `build\axr.exe`
 （静态 CRT，单文件，只依赖系统 `WINHTTP/KERNEL32/WS2_32`）。
 
-一键回归（构建 + 151 条自检）：
+一键回归（构建 + 187 条自检）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tests\run_tests.ps1
 ```
 
-M2 端到端验收（离线 mock，无需任何 API key）：
+端到端验收（离线 mock，无需任何 API key）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tests\e2e_proxy.ps1
 ```
 
-## 内置 Web UI（流程图直接在浏览器看）
-
-`axr serve` 起来后，浏览器访问同一端口即可（页面内嵌在 exe 里，不需要联网、不依赖 CDN）：
-
-```
-http://127.0.0.1:8080/__xray
-```
-
-浏览器直接打开 `http://127.0.0.1:8080/` 也会自动返回页面（仅当 `Accept: text/html`，API 客户端的 `GET /` 仍照常转发）。
-
-页面内容：
-
-- 左侧 run 列表（每 3 秒自动刷新，能看到正在采集的 run）
-- 右侧流程图：Step 节点纵向串联，工具节点横向扇出，模糊匹配边为橙色虚线，失败工具标红
-- 步骤明细表 + 可展开的完整回复 / 工具参数与结果
-- Mermaid 源码（可复制到 mermaid.live 查看官方渲染版）
-
-数据来源分两种：已经 `Ctrl+C` 收尾的 run 读 `run.json`（成本已写回）；还在采集中的 run 直接从
-`events.jsonl` 实时建链，因此跑 AutoGPT 之类长任务时可以边跑边看。接口只有两个：
-
-```
-GET /__xray/api/runs         # run 列表（JSON 数组）
-GET /__xray/api/run?id=<id>  # 单个 run 的步骤 / 成本 / mermaid 源码
-```
+> 零改造是怎么做到的、内部各模块如何分层，见 [docs/agent-xray-design.md](docs/agent-xray-design.md)。
 
 ## 已实现命令
 
 ```powershell
 # M1：离线回放与自检
-build\axr.exe selftest                                  # 174 条断言：hash / model / SSE / 链 / fuzzy / 配置 / 路由 / 脱敏 / 录制 / 成本 / 报告 / diff / prune / model_map / Web UI
+build\axr.exe selftest                                  # 187 条断言：hash / model / SSE / 链 / fuzzy / 配置 / 路由 / 脱敏 / 录制 / 成本 / 报告 / diff / prune / model_map / Web UI
 build\axr.exe replay tests\fixtures\deepseek_tool_2 --format mermaid --out build\graph.mmd
 build\axr.exe replay tests\fixtures\t2_single_tool --format json
 
@@ -202,7 +235,7 @@ DeepSeek 的 `prompt_cache_hit_tokens` 会写入 `Usage.cachedTokens`，按 `cac
 ## M4 工程化
 
 - `axr list`：扫描 `<root>/runs/*`，优先读 `meta.json`；没有 meta 的目录用目录名推导时间并标"无 meta"。
-  `--json` 输出数组，字段固定（`dir/id/started_at/status/step_count/tool_count/total_tokens/cost_usd/...`）。
+  `--json` 输出数组，字段固定（`dir/id/started_at/status/step_count/tool_count/fail_tools/total_tokens/cost_usd/...`）。
 - `axr export`：`--format json` 输出与 `run.json` 同构的 Run（含每步 `cost_usd`）；
   `--format mermaid` 与 `graph.mmd` 同源（含折叠与模糊边规则）。
 - `axr diff`：两个 run 按 **Step 序号对齐**，工具按出现顺序全局编号 `T0、T1…`，输出
@@ -331,3 +364,4 @@ Total: 2 steps · 2851 tokens · $0.000402
 - [x] 阶段 3（M3）：分析质量（superstep / fuzzy / validate / cost / report）
 - [x] 阶段 4（M4）：工程化（diff / prune / list / export / 性能 / 单文件打包）
 - [x] 阶段 5：真实 agent 对照（smolagents + DeepSeek 真流量，2 步 / 2 工具 / complete）
+- [x] 阶段 6：Web UI（内嵌页面 / 实时渲染 / 异常标红 / 折叠 / 耗时甘特图 / 深链）

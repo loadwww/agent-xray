@@ -1,6 +1,7 @@
 #include "ui/webui.h"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -13,6 +14,39 @@
 #include "store/run_index.h"
 
 namespace axr {
+
+// 工具结果里的失败信号。协议层没有 isError 时（结果以文本回填），靠文本特征兜底：
+// 典型如 AutoGPT 的 "Error: ... Error code: 403 Forbidden"、"Failed to read webpage"。
+bool toolResultLooksFailed(const std::string& text) {
+    if (text.empty()) return false;
+    std::string low = text.size() > 600 ? text.substr(0, 600) : text;
+    std::transform(low.begin(), low.end(), low.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    const std::size_t p = low.find_first_not_of(" \t\r\n");
+    if (p != std::string::npos && low.compare(p, 5, "error") == 0) return true;
+    static const char* kPatterns[] = {
+        "error:",      "error code", "traceback",  "exception",    "forbidden",  "unauthorized",
+        "rate limit",  "timed out",  "timed-out",  "http 400",     "http 401",   "http 403",
+        "http 404",    "http 429",   "http 500",   "http 502",     "http 503",   "status 400",
+        "status 401",  "status 403", "status 404", "status 429",   "status 500", "unprocessable",
+        "failed to",   "failed:",    "failure",    "unable to",    "denied",     "too much output",
+    };
+    for (const char* pat : kPatterns) {
+        if (low.find(pat) != std::string::npos) return true;
+    }
+    return false;
+}
+
+int countFailedTools(const Run& run) {
+    int n = 0;
+    for (const auto& s : run.steps) {
+        for (const auto& t : s.tools) {
+            if (t.isError || toolResultLooksFailed(t.result)) ++n;
+        }
+    }
+    return n;
+}
+
 namespace {
 
 const std::string kHtmlContentType = "text/html; charset=utf-8";
@@ -62,16 +96,26 @@ nlohmann::json stepToJson(const Step& s, double cost, bool costKnown) {
     j["messages"] = static_cast<int>(s.call.messages.size());
 
     nlohmann::json tools = nlohmann::json::array();
+    int failCount = 0;
     for (const auto& t : s.tools) {
+        // 协议层没给 isError 时，用工具结果文本兜底（403 / Error: / Forbidden …）
+        const bool inferred = !t.isError && toolResultLooksFailed(t.result);
+        const bool failed = t.isError || inferred;
+        if (failed) ++failCount;
         nlohmann::json jt;
         jt["name"] = t.name;
         jt["arguments"] = trimText(t.arguments, 600);
         jt["result"] = trimText(t.result, 600);
-        jt["isError"] = t.isError;
+        jt["isError"] = failed;
+        jt["errorInferred"] = inferred;
+        jt["approx"] = t.approx;
+        jt["hasResult"] = !t.result.empty();
         jt["durationMs"] = t.durationMs;
         tools.push_back(jt);
     }
     j["tools"] = tools;
+    j["failCount"] = failCount;
+    j["hasError"] = failCount > 0 || !s.response.err.empty();
     return j;
 }
 
@@ -125,6 +169,39 @@ nlohmann::json runToJson(Run& run, const Config& cfg, bool live) {
     }
     j["steps"] = steps;
     j["mermaid"] = toMermaid(run, mo);
+    j["collapseThreshold"] = cfg.chain.collapseThreshold;
+    j["failTools"] = countFailedTools(run);
+    return j;
+}
+
+// 未收尾的 run 还没有 meta.json，列表里现算一份摘要（否则侧栏只会显示 0 步 / unknown）
+nlohmann::json liveSummary(const std::string& runDir, const Config& cfg) {
+    nlohmann::json j;
+    auto chain = buildChainFromEvents(runDir, cfg.chainOptions());
+    if (!chain.ok()) return j;
+    const Run* p = primaryRun(chain.value);
+    if (p == nullptr) return j;
+
+    Run copy = *p;
+    applyCost(copy, cfg.pricing);
+    const CostBreakdown cb = computeCost(copy, cfg.pricing);
+
+    int tools = 0;
+    for (const auto& s : copy.steps) tools += static_cast<int>(s.tools.size());
+    j["steps"] = static_cast<int>(copy.steps.size());
+    j["tools"] = tools;
+    j["failTools"] = countFailedTools(copy);
+    j["tokens"] = copy.total.promptTokens + copy.total.completionTokens;
+    j["requests"] = copy.requestCount;
+    j["retries"] = copy.retryCount;
+    j["incomplete"] = copy.incomplete;
+    j["cost"] = cb.complete ? fmtCost(cb.totalUsd) : std::string("n/a");
+    nlohmann::json models = nlohmann::json::array();
+    for (const auto& s : copy.steps) {
+        if (s.call.model.empty()) continue;
+        if (std::find(models.begin(), models.end(), s.call.model) == models.end()) models.push_back(s.call.model);
+    }
+    j["models"] = models;
     return j;
 }
 
@@ -174,6 +251,15 @@ WebResponse webUiPage() {
   .tag.err{border-color:var(--bad);color:#ff9d99}
   .tag.fuzzy{border-color:var(--warn);color:#f0d795}
   .tag.live{border-color:var(--ok);color:#9ae6b4}
+  .bad{color:#ff9d99;font-weight:600}
+  .btn{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer}
+  .btn:hover{border-color:var(--accent);color:#cfe2ff}
+  header .spacer{flex:1}
+  .gantt-head{display:flex;gap:14px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px;font-size:12px}
+  .gantt-head span{font-size:11px}
+  .legend{display:flex;gap:16px;margin-top:8px;font-size:11px;color:var(--dim)}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:middle}
+  .nowrap{white-space:nowrap}
   details.step{margin-top:10px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
   details.step>summary{cursor:pointer;padding:10px 14px;font-size:13px}
   details.step>div{padding:0 14px 14px}
@@ -181,11 +267,13 @@ WebResponse webUiPage() {
   .muted{color:var(--dim)}
   .empty{color:var(--dim);padding:40px 0;text-align:center}
 </style>
-</head>
+)HTML" R"HTML(</head>
 <body>
 <header>
   <h1>AgentXray</h1>
   <span class="hint">零改造 Agent 执行流程逆向 · 每 3 秒自动刷新</span>
+  <span class="spacer"></span>
+  <button class="btn" id="toggle">折叠工具调用</button>
 </header>
 <div class="wrap">
   <aside>
@@ -200,7 +288,11 @@ WebResponse webUiPage() {
 const listEl = document.getElementById('list');
 const mainEl = document.getElementById('main');
 const countEl = document.getElementById('count');
-let runs = [], selected = null, lastKey = '';
+const toggleEl = document.getElementById('toggle');
+const wantId = new URLSearchParams(location.search).get('id');
+const wantCollapse = new URLSearchParams(location.search).get('collapse') === '1';
+let runs = [], selected = null, lastKey = '', lastData = null, collapsed = wantCollapse;
+if (collapsed) toggleEl.textContent = '展开工具调用';
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -214,9 +306,9 @@ function renderList() {
   if (!runs.length) { listEl.innerHTML = '<div class="empty">还没有 run</div>'; return; }
   listEl.innerHTML = runs.map(r => `
     <div class="run-item ${r.id === selected ? 'active' : ''}" data-id="${esc(r.id)}">
-      <div class="id">${esc(r.id)}</div>
+      <div class="id">${esc(r.id)}${r.live ? ' <span class="tag live">' + esc(r.status) + '</span>' : ''}</div>
       <div class="meta">${esc(r.startedAt || '')} · ${r.steps} 步 · ${r.tools} 工具 · ${r.tokens} tok</div>
-      <div class="meta">${esc(r.cost || '')} · ${esc(r.status)}${r.incomplete ? ' · 不完整' : ''}</div>
+      <div class="meta">${esc(r.cost || '')} · ${esc(r.status)}${r.incomplete ? ' · 不完整' : ''}${r.failTools ? ' · <span class="bad">' + r.failTools + ' 失败</span>' : ''}</div>
     </div>`).join('');
   listEl.querySelectorAll('.run-item').forEach(el => {
     el.onclick = () => { selected = el.dataset.id; lastKey = ''; renderList(); loadRun(); };
@@ -228,7 +320,11 @@ async function loadRuns() {
     const d = await api('/__xray/api/runs');
     runs = Array.isArray(d) ? d : (d.runs || []);
     renderList();
-    if (!selected && runs.length) { selected = runs[0].id; renderList(); loadRun(); }
+    if (!selected && runs.length) {
+      selected = wantId && runs.some(r => r.id === wantId) ? wantId : runs[0].id;
+      renderList();
+      loadRun();
+    }
   } catch (e) { /* 服务器刚启动时忽略 */ }
 }
 
@@ -237,7 +333,7 @@ async function loadRun() {
   let d;
   try { d = await api('/__xray/api/run?id=' + encodeURIComponent(selected)); } catch (e) { return; }
   if (d.error) { mainEl.innerHTML = '<div class="banner bad">' + esc(d.error) + '</div>'; return; }
-  const key = d.id + '|' + d.steps.length + '|' + d.endedAt + '|' + d.live;
+  const key = d.id + '|' + d.steps.length + '|' + d.endedAt + '|' + d.live + '|' + d.total.tokens + '|' + d.failTools;
   if (key === lastKey) return;
   lastKey = key;
   renderRun(d);
@@ -254,22 +350,26 @@ function chips(d) {
     ['耗时', Math.round(d.durationMs / 1000) + 's'],
     ['模型', d.models.join(', ') || '-'],
     ['模糊边', d.fuzzyEdges],
+    ['失败工具', d.failTools || 0],
   ];
-  return '<div class="chips">' + items.map(([k, v]) => `<span class="chip">${k} <b>${esc(v)}</b></span>`).join('') + '</div>';
+  return '<div class="chips">' + items.map(([k, v], i) =>
+    `<span class="chip${k === '失败工具' && v ? ' bad' : ''}">${k} <b>${esc(v)}</b></span>`).join('') + '</div>';
 }
 
-function flowSvg(d) {
+)HTML" R"HTML(function flowSvg(d) {
   const steps = d.steps.slice();
   if (!steps.length) return '<div class="empty">没有步骤</div>';
-  const STEPW = 250, STEPH = 74, GAPY = 46, TOOLW = 270, TOOLH = 56, TGAP = 10, X2 = 330;
+  const STEPW = 250, STEPH = 74, GAPY = 46, TOOLW = 280, TOOLH = 56, TGAP = 10, X2 = 330;
   const rows = []; let y = 0;
   steps.forEach(s => {
-    const th = s.tools.length ? s.tools.length * TOOLH + (s.tools.length - 1) * TGAP : 0;
+    const n = collapsed ? 0 : s.tools.length;
+    const th = n ? n * TOOLH + (n - 1) * TGAP : 0;
     const h = Math.max(STEPH, th);
     rows.push({ s, y, h });
-    y += h + GAPY;
+    y += h + (collapsed ? 26 : GAPY);
   });
-  const H = y - GAPY + 16, W = X2 + TOOLW + 20;
+  const last = rows[rows.length - 1];
+  const H = last.y + last.h + 16, W = X2 + TOOLW + 20;
   let g = '';
   rows.forEach((row, i) => {
     const s = row.s, cx = STEPW / 2;
@@ -279,23 +379,94 @@ function flowSvg(d) {
       g += `<line x1="${cx}" y1="${y1}" x2="${cx}" y2="${y2}" stroke="#3b4656" stroke-width="1.5" marker-end="url(#arr)"/>`;
       if (s.fuzzy) g += `<text x="${cx + 8}" y="${(y1 + y2) / 2 + 4}" fill="#d29922" font-size="11">推测</text>`;
     }
-    const border = s.fuzzy ? '#d29922' : (s.error ? '#f85149' : '#4c9aff');
-    g += `<rect x="0" y="${row.y}" width="${STEPW}" height="${STEPH}" rx="10" fill="#151c26" stroke="${border}" stroke-width="1.5" ${s.fuzzy ? 'stroke-dasharray="6 4"' : ''}/>`;
-    g += `<text x="12" y="${row.y + 22}" fill="#e6edf3" font-size="13" font-weight="600">Step ${i + 1} · ${esc(s.model || '-')}</text>`;
+    const bad = s.hasError;
+    const border = bad ? '#f85149' : (s.fuzzy ? '#d29922' : '#4c9aff');
+    g += `<rect x="0" y="${row.y}" width="${STEPW}" height="${STEPH}" rx="10" fill="${bad ? '#20151a' : '#151c26'}" stroke="${border}" stroke-width="${bad ? 2 : 1.5}" ${s.fuzzy && !bad ? 'stroke-dasharray="6 4"' : ''}/>`;
+    g += `<text x="12" y="${row.y + 22}" fill="#e6edf3" font-size="13" font-weight="600">Step ${i + 1}${bad ? ' · 受阻' : ''}</text>`;
+    g += `<text x="${STEPW - 10}" y="${row.y + 22}" text-anchor="end" fill="#8b98a9" font-size="11">${esc(s.model || '-')}</text>`;
     g += `<text x="12" y="${row.y + 42}" fill="#8b98a9" font-size="11">${s.latencyMs}ms · ${s.tokens} tok · ${esc(s.cost)}${s.streamed ? ' · 流式' : ''}</text>`;
     g += `<text x="12" y="${row.y + 60}" fill="#8b98a9" font-size="11">${esc((s.finishReason || '') + ' · 消息 ' + s.messages + ' · 工具定义 ' + s.toolDefs)}</text>`;
+    if (collapsed && s.tools.length) {
+      g += `<text x="${STEPW - 10}" y="${row.y + 42}" text-anchor="end" fill="${s.failCount ? '#ff9d99' : '#3fb950'}" font-size="11">${s.tools.length} 工具${s.failCount ? ' · ' + s.failCount + ' 失败' : ''}</text>`;
+    }
+    if (collapsed) return;
     s.tools.forEach((t, j) => {
       const ty = row.y + j * (TOOLH + TGAP);
       g += `<line x1="${STEPW}" y1="${row.y + STEPH / 2}" x2="${X2}" y2="${ty + TOOLH / 2}" stroke="#3b4656" stroke-width="1.5" marker-end="url(#arr)"/>`;
-      const c = t.isError ? '#f85149' : '#3fb950';
-      g += `<rect x="${X2}" y="${ty}" width="${TOOLW}" height="${TOOLH}" rx="8" fill="#131a22" stroke="${c}" stroke-width="1.5"/>`;
-      g += `<text x="${X2 + 12}" y="${ty + 22}" fill="#e6edf3" font-size="12" font-weight="600">${esc(t.name)}${t.isError ? ' · 失败' : ''}</text>`;
-      g += `<text x="${X2 + 12}" y="${ty + 40}" fill="#8b98a9" font-size="11">${t.durationMs}ms · ${esc((t.arguments || '').slice(0, 34))}</text>`;
+      const c = t.isError ? '#f85149' : (t.hasResult ? '#3fb950' : '#55637a');
+      g += `<rect x="${X2}" y="${ty}" width="${TOOLW}" height="${TOOLH}" rx="8" fill="${t.isError ? '#20151a' : '#131a22'}" stroke="${c}" stroke-width="1.5"><title>${esc(t.result || t.arguments || '')}</title></rect>`;
+      g += `<text x="${X2 + 12}" y="${ty + 22}" fill="${t.isError ? '#ffb3b0' : '#e6edf3'}" font-size="12" font-weight="600">${esc(t.name)}${t.isError ? ' · 失败' : (t.hasResult ? '' : ' · 结果未观测')}</text>`;
+      g += `<text x="${X2 + 12}" y="${ty + 40}" fill="#8b98a9" font-size="11">${t.durationMs}ms · ${esc((t.arguments || '').slice(0, 40))}</text>`;
     });
   });
   return `<div class="flow"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
     <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
       <path d="M0,0 L8,4 L0,8 z" fill="#3b4656"/></marker></defs>${g}</svg></div>`;
+}
+
+function fmtMs(ms) {
+  if (!ms || ms <= 0) return '0';
+  if (ms < 1000) return Math.round(ms) + 'ms';
+  if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+  return Math.floor(ms / 60000) + 'm' + Math.round((ms % 60000) / 1000) + 's';
+}
+
+// 甘特图：模型调用按响应延迟铺；同一步的工具从同一时刻起跑（即并行），宽度为推断耗时
+function gantt(d) {
+  const steps = d.steps;
+  if (!steps.length) return '';
+  const MAXROWS = 8;
+  const rows = []; let cur = 0;
+  steps.forEach((s, i) => {
+    const llm = Math.max(0, s.latencyMs || 0);
+    rows.push({ label: 'S' + (i + 1) + ' · LLM', start: cur, dur: llm, kind: 'llm', err: false,
+      sub: false, tip: 'Step ' + (i + 1) + ' 模型调用 ' + fmtMs(llm) });
+    cur += llm;
+    const tmax = s.tools.reduce((a, t) => Math.max(a, t.durationMs || 0), 0);
+    // 同名工具（并行扇出）合并成一行，避免 8 行同名 http_get 把图撑爆
+    const groups = [];
+    s.tools.slice(0, MAXROWS * 2).forEach(t => {
+      const g = groups.find(x => x.name === t.name);
+      if (g) {
+        g.n++; g.dur = Math.max(g.dur, t.durationMs || 0);
+        g.err = g.err || !!t.isError; g.nr = g.nr || !t.hasResult;
+      } else {
+        groups.push({ name: t.name, n: 1, dur: t.durationMs || 0, err: !!t.isError, nr: !t.hasResult });
+      }
+    });
+    groups.slice(0, MAXROWS).forEach(g => {
+      rows.push({ label: g.name + (g.n > 1 ? ' ×' + g.n : ''), start: cur,
+        dur: Math.max(g.dur, 2), kind: 'tool', err: g.err, sub: true,
+        tip: g.name + (g.n > 1 ? ' ×' + g.n + ' 并行' : '') + ' ' + fmtMs(g.dur) +
+          (g.err ? '（有失败）' : '') + (g.nr ? '（部分结果未观测）' : '') });
+    });
+    cur += tmax;
+  });
+  const measured = cur;
+  const total = Math.max(d.durationMs || 0, measured, 1);
+  const GUT = 132, W = 940, CH = W - GUT - 16, rowH = 20, top = 26;
+  const H = top + rows.length * rowH + 10;
+  const px = ms => GUT + (ms / total) * CH;
+  const pw = ms => Math.max(2, (ms / total) * CH);
+  let g = '';
+  for (let k = 0; k <= 4; k++) {
+    const ms = total * k / 4, x = px(ms);
+    g += `<line x1="${x}" y1="${top - 6}" x2="${x}" y2="${top + rows.length * rowH}" stroke="#1f2733"/>`;
+    g += `<text x="${x}" y="${top - 10}" fill="#6b7787" font-size="10" text-anchor="${k === 0 ? 'start' : (k === 4 ? 'end' : 'middle')}">${fmtMs(ms)}</text>`;
+  }
+  rows.forEach((r, i) => {
+    const y = top + i * rowH;
+    const color = r.err ? '#f85149' : (r.kind === 'llm' ? '#4c9aff' : '#3fb950');
+    g += `<text x="0" y="${y + 14}" fill="${r.sub ? '#8b98a9' : '#e6edf3'}" font-size="11">${esc((r.sub ? '   ' : '') + r.label)}</text>`;
+    g += `<rect x="${px(r.start)}" y="${y + 4}" width="${pw(r.dur)}" height="${rowH - 9}" rx="3" fill="${color}" opacity="${r.kind === 'llm' ? 0.85 : 0.75}"><title>${esc(r.tip)}</title></rect>`;
+  });
+  if (total - measured > 2) {
+    g += `<rect x="${px(measured)}" y="${top}" width="${pw(total - measured)}" height="${rows.length * rowH - 4}" rx="3" fill="#2a3340" opacity="0.5"><title>未计入的间隙（网络 / 调度 / 客户端处理）</title></rect>`;
+    g += `<text x="${px(measured) + 6}" y="${top + 16}" fill="#8b98a9" font-size="10">间隙 ${fmtMs(total - measured)}</text>`;
+  }
+  return `<div class="flow"><div class="gantt-head"><b>总耗时 ${fmtMs(total)}</b><span class="muted">模型 = 响应延迟；工具 = 上一条响应结束 → 下一条请求开始（推断）；同一 Step 内的工具同时起跑即并行</span></div>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${g}</svg>
+    <div class="legend"><span><i style="background:#4c9aff"></i>模型调用</span><span><i style="background:#3fb950"></i>工具</span><span><i style="background:#f85149"></i>失败 / 受限</span><span><i style="background:#2a3340"></i>未计入间隙</span></div></div>`;
 }
 
 function stepsTable(d) {
@@ -306,7 +477,7 @@ function stepsTable(d) {
       <td class="mono">${s.latencyMs}ms</td>
       <td class="mono">${s.promptTokens} / ${s.completionTokens}${s.cachedTokens ? ' / 缓存 ' + s.cachedTokens : ''}</td>
       <td class="mono">${esc(s.cost)}</td>
-      <td>${s.tools.map(t => `<span class="tag ${t.isError ? 'err' : ''}">${esc(t.name)} · ${t.durationMs}ms</span>`).join(' ') || '<span class="muted">-</span>'}</td>
+      <td>${s.tools.map(t => `<span class="tag ${t.isError ? 'err' : ''}" title="${esc(t.isError ? (t.errorInferred ? '按结果文本推断为失败' : '协议标记失败') : '')}">${esc(t.name)} · ${t.durationMs}ms${t.isError ? ' · 失败' : ''}</span>`).join(' ') || '<span class="muted">-</span>'}</td>
       <td>${s.fuzzy ? '<span class="tag fuzzy">推测连接</span> ' : ''}${esc((s.text || '').replace(/\s+/g, ' ').slice(0, 90))}</td>
     </tr>`).join('');
   return `<table><thead><tr><th>#</th><th>模型</th><th>耗时</th><th>token（提示/补全）</th><th>成本</th><th>工具</th><th>回复摘要</th></tr></thead><tbody>${rows}</tbody></table>`;
@@ -318,23 +489,36 @@ function stepDetails(d) {
       <div>
         <div class="muted" style="margin-bottom:8px">${esc(s.endpoint)}</div>
         <pre>${esc(s.text || '(无文本)')}</pre>
-        ${s.tools.map(t => `<div style="margin-top:10px"><div>${esc(t.name)} <span class="muted">${t.durationMs}ms${t.isError ? ' · 失败' : ''}</span></div>
+        ${s.tools.map(t => `<div style="margin-top:10px"><div>${esc(t.name)} <span class="muted">${t.durationMs}ms${t.isError ? ' · 失败' + (t.errorInferred ? '（按结果文本推断，上游未标 is_error）' : '') : ''}</span></div>
           <pre>参数: ${esc(t.arguments || '-')}\n结果: ${esc(t.result || '-')}</pre></div>`).join('')}
       </div>
     </details>`).join('');
 }
 
-function renderRun(d) {
-  let html = `<div class="muted" style="font-family:Consolas,monospace">${esc(d.id)} <span class="tag ${d.live ? 'live' : ''}">${d.live ? '采集中' : '已落盘'}</span></div>`;
+)HTML" R"HTML(function renderRun(d) {
+  lastData = d;
+  let html = `<div class="muted" style="font-family:Consolas,monospace">${esc(d.id)} <span class="tag ${d.live ? 'live' : ''}">${d.live ? '采集中（每 3 秒刷新）' : '已落盘'}</span></div>`;
   html += chips(d);
   if (d.incomplete || d.missing.length) {
     html += '<div class="banner">完整性校验未通过：' + (d.missing.map(m => esc(m)).join('；') || '最后一步没有后续请求') + '</div>';
   }
-  html += '<h2>流程图</h2>' + flowSvg(d);
+  if (d.failTools) {
+    const first = d.steps.findIndex(s => s.failCount);
+    html += '<div class="banner bad">有 ' + d.failTools + ' 个工具调用失败或被拒绝（403 / Error …），' +
+      (first >= 0 ? '最早出现在 Step ' + (first + 1) + '：' : '') + '图中已标红，可展开该 Step 看原始结果</div>';
+  }
+  html += '<h2>时间线</h2>' + gantt(d);
+  html += '<h2>流程图' + (collapsed ? ' <span class="muted" style="font-size:11px;font-weight:400">（工具分支已折叠，右上角按钮可展开）</span>' : '') + '</h2>' + flowSvg(d);
   html += '<h2>步骤明细</h2>' + stepsTable(d) + stepDetails(d);
   html += `<details class="step"><summary>Mermaid 源码（可粘贴到 mermaid.live）</summary><div><pre>${esc(d.mermaid)}</pre></div></details>`;
   mainEl.innerHTML = html;
 }
+
+toggleEl.onclick = () => {
+  collapsed = !collapsed;
+  toggleEl.textContent = collapsed ? '展开工具调用' : '折叠工具调用';
+  if (lastData) renderRun(lastData);
+};
 
 loadRuns();
 setInterval(() => { loadRuns(); loadRun(); }, 3000);
@@ -354,6 +538,7 @@ WebResponse webUiRuns(const Config& cfg) {
     }
     nlohmann::json arr = nlohmann::json::array();
     for (const auto& m : runs.value) {
+        if (m.hasMeta && m.status == "empty") continue; // 没捕获到任何流量的会话，列表里不占位置
         nlohmann::json j;
         j["id"] = m.dirName;
         j["startedAt"] = m.hasMeta ? m.startedAt : timeFromDirName(m.dirName);
@@ -361,11 +546,22 @@ WebResponse webUiRuns(const Config& cfg) {
         j["incomplete"] = m.incomplete;
         j["steps"] = m.stepCount;
         j["tools"] = m.toolCount;
+        j["failTools"] = m.failTools;
         j["requests"] = m.requestCount;
         j["retries"] = m.retryCount;
         j["tokens"] = m.totalTokens;
         j["cost"] = m.costKnown ? fmtCost(m.costUsd) : std::string("n/a");
         j["models"] = m.models;
+        if (!m.hasMeta) {
+            // 还在采集中（或 axr 被强杀、没来得及收尾）：现算，让侧栏有真实数值
+            const auto s = liveSummary(m.path, cfg);
+            if (s.empty() || s["steps"].get<int>() <= 0) continue; // 还没捕获到调用，先不占列表
+            j["live"] = true;
+            j["status"] = m.ageDays * 86400.0 > 600 ? "未收尾" : "采集中";
+            for (auto it = s.begin(); it != s.end(); ++it) j[it.key()] = it.value();
+        } else {
+            j["live"] = false;
+        }
         arr.push_back(j);
     }
     r.body = arr.dump();

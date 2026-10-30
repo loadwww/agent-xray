@@ -3,6 +3,7 @@
 #include <string>
 
 #include "config/config.h"
+#include "parse/model.h"
 
 namespace axr {
 
@@ -11,6 +12,11 @@ struct WebResponse {
     std::string body;
     std::string contentType = "application/json; charset=utf-8";
 };
+
+// 工具结果是否像失败：协议层没有 is_error 时（结果被框架以文本回填），靠文本兜底
+// （403 / Error: / Failed to / 超时 / 限流 …）。Web UI 高亮与 meta.json 的失败计数共用。
+bool toolResultLooksFailed(const std::string& result);
+int countFailedTools(const Run& run);
 
 WebResponse webUiPage();
 WebResponse webUiRuns(const Config& cfg);

@@ -11,6 +11,7 @@
 #include "store/events_reader.h"
 #include "store/run_dir.h"
 #include "ui/report.h"
+#include "ui/webui.h"
 
 namespace axr {
 namespace {
@@ -26,6 +27,7 @@ void writeMeta(const std::string& runDir, const RunSummary& s, const Run* run, l
     m["duration_ms"] = durationMs;
     m["step_count"] = s.stepCount;
     m["tool_count"] = s.toolCount;
+    if (run) m["fail_tools"] = countFailedTools(*run);
     m["request_count"] = s.requestCount;
     m["retry_count"] = s.retryCount;
     m["total_tokens"] = s.totalTokens;

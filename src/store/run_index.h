@@ -17,6 +17,7 @@ struct RunMeta {
     bool hasMeta = false;
     int stepCount = 0;
     int toolCount = 0;
+    int failTools = 0; // 失败/被拒绝的工具调用数（meta.json 的 fail_tools）
     int requestCount = 0;
     int retryCount = 0;
     int totalTokens = 0;
