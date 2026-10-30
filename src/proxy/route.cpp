@@ -15,6 +15,7 @@ RouteResult resolveUpstream(const std::string& path, const std::vector<UpstreamD
         if (up.match.size() >= bestLen) { // >= 让后配置的同长度规则覆盖先前的
             best.matched = true;
             best.upstreamName = up.name;
+            best.modelMap = up.modelMap;
             bestLen = up.match.size();
 
             std::string tail = path.substr(up.match.size());

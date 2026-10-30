@@ -182,6 +182,47 @@ storage:
         t.check(!injectStreamUsage(bad) && bad == "not json", "M2 非 JSON 原样转发");
     }
 
+    // model_map：客户端模型名 -> 上游模型名（AutoGPT 只认 gpt-4o 这类名字）
+    {
+        const std::string yaml = R"(
+proxy:
+  upstreams:
+    - match: "/v1"
+      url: "https://api.deepseek.com/v1"
+      name: "deepseek"
+      model_map:
+        gpt-4o: deepseek-chat
+        gpt-4-turbo: deepseek-chat
+    - match: "/ollama"
+      url: "http://127.0.0.1:11434/v1"
+      name: "ollama"
+)";
+        auto cfg = parseConfigText(yaml);
+        t.check(cfg.ok() && cfg.value.proxy.upstreams.size() == 2, "M2 model_map 配置可解析");
+        if (cfg.ok() && cfg.value.proxy.upstreams.size() == 2) {
+            const auto& m = cfg.value.proxy.upstreams[0].modelMap;
+            t.check(m.size() == 2 && m.at("gpt-4o") == "deepseek-chat", "M2 model_map 映射项");
+            t.check(cfg.value.proxy.upstreams[1].match == "/ollama" &&
+                        cfg.value.proxy.upstreams[1].modelMap.empty(),
+                    "M2 model_map 之后的 upstream 仍正确解析");
+            auto r = resolveUpstream("/v1/chat/completions", cfg.value.proxy.upstreams);
+            t.check(r.matched && r.modelMap.size() == 2, "M2 路由携带 model_map");
+        }
+
+        auto map = std::map<std::string, std::string>{{"gpt-4o", "deepseek-chat"}};
+        std::string hit = R"({"model":"gpt-4o","messages":[]})";
+        std::string applied;
+        t.check(rewriteModel(hit, map, &applied) && hit.find("\"deepseek-chat\"") != std::string::npos,
+                "M2 model_map 命中后改写 model 字段");
+        t.check(applied == "gpt-4o -> deepseek-chat", "M2 model_map 记录改写来源");
+        std::string miss = R"({"model":"deepseek-chat"})";
+        t.check(!rewriteModel(miss, map) && miss == R"({"model":"deepseek-chat"})", "M2 model_map 未命中不改写");
+        std::string bad = "not json";
+        t.check(!rewriteModel(bad, map) && bad == "not json", "M2 model_map 非 JSON 原样转发");
+        std::string noModel = R"({"input":"hi"})";
+        t.check(!rewriteModel(noModel, map), "M2 model_map 请求无 model 字段不改写");
+    }
+
     // 上游路由：最长前缀 + 剥离 match 前缀
     {
         std::vector<UpstreamDef> ups = {

@@ -26,6 +26,8 @@ struct UpstreamDef {
     std::string match; // 如 "/v1"
     std::string url;   // 如 "https://api.deepseek.com/v1"
     std::string name;  // 如 "deepseek"
+    // 模型名改写：客户端只认自家的模型名（如 AutoGPT 的 gpt-4o），转发前换成上游真实的模型名
+    std::map<std::string, std::string> modelMap;
 };
 
 struct Config {

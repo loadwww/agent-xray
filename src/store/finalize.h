@@ -24,7 +24,7 @@ struct RunSummary {
     std::string primaryModel;
     std::string status; // complete | incomplete | empty
     long long droppedEvents = 0;
-    int rewrittenRequests = 0; // inject_usage 改写过的请求数（§7.2.3，meta 记 rewritten）
+    int rewrittenRequests = 0; // 请求体被改写过的次数（model_map / inject_usage，meta 记 rewritten）
 };
 
 RunSummary finalizeRun(const std::string& runDir, const Config& cfg, long long droppedEvents,

@@ -24,4 +24,23 @@ bool injectStreamUsage(std::string& bodyJson) {
     return true;
 }
 
+bool rewriteModel(std::string& bodyJson, const std::map<std::string, std::string>& modelMap,
+                  std::string* applied) {
+    if (modelMap.empty()) return false;
+    nlohmann::json body;
+    try {
+        body = nlohmann::json::parse(bodyJson);
+    } catch (...) {
+        return false;
+    }
+    if (!body.is_object() || !body.contains("model") || !body["model"].is_string()) return false;
+    const std::string from = body["model"].get<std::string>();
+    auto it = modelMap.find(from);
+    if (it == modelMap.end() || it->second.empty()) return false;
+    body["model"] = it->second;
+    bodyJson = body.dump();
+    if (applied) *applied = from + " -> " + it->second;
+    return true;
+}
+
 } // namespace axr

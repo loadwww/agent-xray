@@ -97,6 +97,27 @@ proxy:
       name: "ollama"
 ```
 
+### 模型名映射（`model_map`）
+
+有些客户端只认自家枚举里的模型名（典型：AutoGPT classic 只接受 `gpt-4o`、`gpt-4-turbo`，
+传 `deepseek-chat` 会在 `CHAT_MODELS` 查表时直接 KeyError）。给上游加 `model_map` 即可在转发前
+把 `model` 字段换掉，客户端与上游都不用改：
+
+```yaml
+proxy:
+  upstreams:
+    - match: "/v1"
+      url: "https://api.deepseek.com/v1"
+      name: "deepseek"
+      model_map:
+        gpt-4o: deepseek-chat
+        gpt-4o-mini: deepseek-chat
+        gpt-4-turbo: deepseek-chat
+```
+
+命中后 `axr serve` 日志打印 `模型名改写: gpt-4o -> deepseek-chat`，落盘的 `req` 事件记录的是
+改写后的请求体（即真实发给上游的内容），`meta.json` 里记 `"rewritten": true`。
+
 落盘副本自动脱敏：`authorization` / `x-api-key` / `api-key` 头置为 `***`，
 body 中 `sk-...` 形态密钥按正则替换；原始请求照常转发，不影响上游鉴权。
 

@@ -15,6 +15,12 @@ proxy:
     - match: "/v1"
       url: "https://api.deepseek.com/v1"
       name: "deepseek"
+      # 模型名映射：客户端只认自家模型名时（如 AutoGPT 的 gpt-4o），转发前换成上游真实模型名
+      model_map:
+        gpt-4o: deepseek-chat
+        gpt-4o-mini: deepseek-chat
+        gpt-4-turbo: deepseek-chat
+        gpt-3.5-turbo: deepseek-chat
     - match: "/ollama"
       url: "http://127.0.0.1:11434/v1"
       name: "ollama"

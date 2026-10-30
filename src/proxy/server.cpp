@@ -218,8 +218,13 @@ void ReverseProxySource::handle(const httplib::Request& req, httplib::Response& 
         // 非 JSON 也照样转发，交给上游判断
     }
 
-    // §7.2.3：流式请求默认不带 usage，开启 inject_usage 时补 stream_options.include_usage
+    // 请求体改写：模型名映射（upstreams[].model_map）+ 流式补 usage（§7.2.3）
     std::string forwardBody = req.body;
+    std::string modelApplied;
+    if (rewriteModel(forwardBody, route.modelMap, &modelApplied)) {
+        ++rewritten_;
+        logInfo("proxy", hop + " 模型名改写: " + modelApplied);
+    }
     if (cfg_.proxy.injectUsage && stream && injectStreamUsage(forwardBody)) {
         ++rewritten_;
         logInfo("proxy", hop + " 已补 stream_options.include_usage");

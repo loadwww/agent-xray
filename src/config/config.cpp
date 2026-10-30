@@ -219,7 +219,8 @@ Result<Config> parseConfigText(const std::string& text, const Config& base) {
     Config cfg = base;
 
     std::string section;  // proxy / chain / redact / storage / pricing
-    std::string subKey;   // upstreams / headers / patterns / pricing 模型名
+    std::string subKey;   // upstreams / model_map / headers / patterns / pricing 模型名
+    int modelMapIndent = 0;
     bool upsCleared = false, hdrCleared = false, patCleared = false, priceCleared = false;
 
     std::size_t pos = 0;
@@ -238,7 +239,7 @@ Result<Config> parseConfigText(const std::string& text, const Config& base) {
 
         if (startsWith(body, "- ")) {
             const std::string item = trim(body.substr(2));
-            if (section == "proxy" && subKey == "upstreams") {
+            if (section == "proxy" && (subKey == "upstreams" || subKey == "model_map")) {
                 const std::size_t colon = item.find(':');
                 if (colon == std::string::npos) {
                     logWarn("config", "忽略无法识别的 upstreams 列表项: " + item);
@@ -251,6 +252,7 @@ Result<Config> parseConfigText(const std::string& text, const Config& base) {
                 else if (k == "url") up.url = v;
                 else if (k == "name") up.name = v;
                 cfg.proxy.upstreams.push_back(up);
+                subKey = "upstreams"; // 新列表项重新归属 upstreams（model_map 可能刚切换过子键）
             } else if (section == "redact" && (subKey == "headers" || subKey == "patterns")) {
                 if (subKey == "headers") cfg.redact.headers.push_back(unquote(item));
                 else cfg.redact.patterns.push_back(unquote(item));
@@ -275,6 +277,7 @@ Result<Config> parseConfigText(const std::string& text, const Config& base) {
                 }
             } else {
                 subKey = key;
+                if (key == "model_map") modelMapIndent = indent;
             }
             // 配置文件里的列表覆盖默认值（只清一次，允许列表跨多行）
             if (indent > 0 && section == "proxy" && subKey == "upstreams" && !upsCleared) {
@@ -315,6 +318,15 @@ Result<Config> parseConfigText(const std::string& text, const Config& base) {
                 }
             }
             continue;
+        }
+
+        // model_map 内的 "客户端模型名: 上游模型名" 映射
+        if (section == "proxy" && subKey == "model_map" && indent > modelMapIndent && !cfg.proxy.upstreams.empty()) {
+            cfg.proxy.upstreams.back().modelMap[unquote(key)] = unquote(value);
+            continue;
+        }
+        if (section == "proxy" && subKey == "model_map" && indent <= modelMapIndent) {
+            subKey = "upstreams"; // 缩进退回 upstream 字段层级，后续键仍按 upstream 解析
         }
 
         if (section == "proxy" && subKey == "upstreams" && indent > 0 && !cfg.proxy.upstreams.empty()) {
