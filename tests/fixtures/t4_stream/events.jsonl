@@ -1,0 +1,20 @@
+{"seq":1,"ts":"2026-10-30T14:33:00.000+08:00","kind":"req","hop":"h-1","upstream":"https://api.deepseek.com/v1/chat/completions","req_body":"{\"model\":\"deepseek-chat\",\"messages\":[{\"role\":\"system\",\"content\":\"你是一个会使用工具的助手。\"},{\"role\":\"user\",\"content\":\"帮我查一下北京今天天气\"}],\"stream\":true,\"stream_options\":{\"include_usage\":true}}","req_headers":{"content-type":"application/json","authorization":"***"}}
+{"seq":2,"ts":"2026-10-30T14:33:00.300+08:00","kind":"sse_chunk","hop":"h-1","data":"data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"北\"}}]}\n\n"}
+{"seq":3,"ts":"2026-10-30T14:33:00.500+08:00","kind":"sse_chunk","hop":"h-1","data":"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"京\""}
+{"seq":4,"ts":"2026-10-30T14:33:00.600+08:00","kind":"sse_chunk","hop":"h-1","data":"}}]}\n\n"}
+{"seq":5,"ts":"2026-10-30T14:33:00.900+08:00","kind":"sse_chunk","hop":"h-1","data":"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"ci\"}}]}}]}\n\n"}
+{"seq":6,"ts":"2026-10-30T14:33:01.100+08:00","kind":"sse_chunk","hop":"h-1","data":"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"ty\\\":\\\"北\"}}]}}]}\n\n"}
+{"seq":7,"ts":"2026-10-30T14:33:01.200+08:00","kind":"sse_chunk","hop":"h-1","data":"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"京\\\"}\"}}]}}]}\n\n"}
+{"seq":8,"ts":"2026-10-30T14:33:01.400+08:00","kind":"sse_chunk","hop":"h-1","data":"data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n"}
+{"seq":9,"ts":"2026-10-30T14:33:01.500+08:00","kind":"sse_chunk","hop":"h-1","data":"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":40,\"completion_tokens\":20,\"total_tokens\":60}}\n\n"}
+{"seq":10,"ts":"2026-10-30T14:33:01.600+08:00","kind":"sse_chunk","hop":"h-1","data":"data: [DONE]\n\n"}
+{"seq":11,"ts":"2026-10-30T14:33:01.600+08:00","kind":"sse_end","hop":"h-1"}
+{"seq":12,"ts":"2026-10-30T14:33:01.700+08:00","kind":"resp","hop":"h-1","status":200,"latency_ms":1700}
+{"seq":13,"ts":"2026-10-30T14:33:02.000+08:00","kind":"req","hop":"h-2","upstream":"https://api.deepseek.com/v1/chat/completions","req_body":"{\"model\":\"deepseek-chat\",\"messages\":[{\"role\":\"system\",\"content\":\"你是一个会使用工具的助手。\"},{\"role\":\"user\",\"content\":\"帮我查一下北京今天天气\"},{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"get_weather\",\"arguments\":\"{\\\"city\\\":\\\"北京\\\"}\"}}]},{\"role\":\"tool\",\"tool_call_id\":\"call_1\",\"content\":\"北京：晴，25℃\"}],\"stream\":true}","req_headers":{"content-type":"application/json","authorization":"***"}}
+{"seq":14,"ts":"2026-10-30T14:33:02.300+08:00","kind":"sse_chunk","hop":"h-2","data":"data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"北京今天\"}}]}\n\n"}
+{"seq":15,"ts":"2026-10-30T14:33:02.500+08:00","kind":"sse_chunk","hop":"h-2","data":"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"晴。\"}}]}\n\n"}
+{"seq":16,"ts":"2026-10-30T14:33:02.700+08:00","kind":"sse_chunk","hop":"h-2","data":"data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"}
+{"seq":17,"ts":"2026-10-30T14:33:02.800+08:00","kind":"sse_chunk","hop":"h-2","data":"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":90,\"completion_tokens\":12,\"total_tokens\":102}}\n\n"}
+{"seq":18,"ts":"2026-10-30T14:33:02.900+08:00","kind":"sse_chunk","hop":"h-2","data":"data: [DONE]\n\n"}
+{"seq":19,"ts":"2026-10-30T14:33:02.900+08:00","kind":"sse_end","hop":"h-2"}
+{"seq":20,"ts":"2026-10-30T14:33:03.000+08:00","kind":"resp","hop":"h-2","status":200,"latency_ms":1000}
