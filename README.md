@@ -74,6 +74,23 @@ axr serve --listen 8080             # 或常驻代理，浏览器打开 127.0.0.
 axr show <runID>                    # 终端看步骤 / token / 工具扇出
 ```
 
+`axr serve` 是**前台程序**（不会自动弹浏览器），窗口关掉或 `Ctrl+C` 就结束。它和 `build\axr.exe`
+是同一个程序，安装后在任何目录都能直接 `axr serve`，不需要进仓库目录。两种跑法：
+
+```powershell
+# A. 单终端：代理随 agent 启动、跑完自动收尾（日常调试推荐）
+axr run -- python your_agent.py
+
+# B. 常驻服务：独立进程 + 独立窗口，不占用 agent 所在的终端
+Start-Process axr -ArgumentList 'serve','--listen','8080' -WorkingDirectory D:\agent-xray
+```
+
+B 方式下浏览器打开 `http://127.0.0.1:8080/__xray`；结束请到那个窗口按 `Ctrl+C`（会正常写
+`run.json` / `report.md`），直接关窗口或用 `Stop-Process` 只会留下 `events.jsonl`。
+
+`config.yaml` 默认从**当前目录**读取：不在仓库目录时用 `--config D:\agent-xray\config.yaml`
+（否则会静默使用内置默认上游，你的 `model_map` 等配置不会生效）。
+
 ### 方式二：从源码构建
 
 需要 VS 2022 或 Build Tools（勾选「使用 C++ 的桌面开发」）：
