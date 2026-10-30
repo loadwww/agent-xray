@@ -4,19 +4,32 @@
 
 > 完整施工规格见 [docs/agent-xray-design.md](docs/agent-xray-design.md)。
 
-## 构建（Windows / MSVC）
+## 快速开始（Windows）
 
-环境隔离在 `D:\env\axr`，代码区不存放任何工具链。
+**方式一：下载预编译（无需编译）**
 
 ```powershell
-. D:\env\axr\env.ps1          # 初始化 MSVC + WinSDK + CMake + Ninja
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+irm https://raw.githubusercontent.com/loadwww/agent-xray/master/scripts/install.ps1 | iex
 ```
 
-产物：`build\axr.exe`
+下载最新的 `axr.exe` 到 `%LOCALAPPDATA%\Programs\axr` 并加入用户 PATH，然后：
 
-一键回归（环境初始化 + 构建 + 自检）：
+```powershell
+$env:OPENAI_API_KEY = "<你的 key>"
+axr run -- python your_agent.py     # 自动起代理、注入 OPENAI_BASE_URL、跑完自动收尾
+axr show <runID>                    # 看步骤 / token / 成本
+```
+
+**方式二：从源码构建**（需要 VS 2022 或 Build Tools，勾选「使用 C++ 的桌面开发」）
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1
+```
+
+脚本会自动定位 MSVC、Windows SDK 与 VS 自带的 CMake/Ninja，产物为 `build\axr.exe`
+（静态 CRT，单文件，只依赖系统 `WINHTTP/KERNEL32/WS2_32`）。
+
+一键回归（构建 + 151 条自检）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tests\run_tests.ps1
