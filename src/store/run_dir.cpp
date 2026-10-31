@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <random>
+#include <system_error>
 
 #include "common/log.h"
 
@@ -35,6 +36,13 @@ std::string ensureRunDir(const std::string& root, const std::string& sessionId) 
     try {
         const std::filesystem::path dir = std::filesystem::path(root) / "runs" / sessionId;
         std::filesystem::create_directories(dir);
+#ifndef _WIN32
+        // P2-13：run 目录含完整会话内容，仅属主可读写（Windows 依赖用户目录 ACL）
+        std::error_code ec;
+        std::filesystem::permissions(dir, std::filesystem::perms::owner_all,
+                                     std::filesystem::perm_options::replace, ec);
+        if (ec) logWarn("storage", "无法设置 run 目录权限 0700: " + ec.message());
+#endif
         return dir.string();
     } catch (const std::exception& e) {
         logError("storage", "无法创建 run 目录: " + std::string(e.what()));

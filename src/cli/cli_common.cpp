@@ -1,5 +1,7 @@
 #include "cli/cli_common.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 
@@ -26,6 +28,8 @@ Status parseProxyArgs(const std::vector<std::string>& args, ProxyCliOpts& out) {
             }
         } else if (a == "--bind" && i + 1 < args.size()) {
             out.bind = args[++i];
+        } else if (a == "--allow-remote") {
+            out.allowRemote = true;
         } else if (!a.empty() && a[0] == '-') {
             return Status::Fail("未知选项: " + a);
         } else {
@@ -51,6 +55,18 @@ Result<Config> loadEffectiveConfig(const ProxyCliOpts& opts) {
     if (opts.listen > 0) cfg.proxy.listen = opts.listen;
     if (!opts.bind.empty()) cfg.proxy.bind = opts.bind;
     return Result<Config>::Ok(cfg);
+}
+
+bool isLoopbackBind(const std::string& bind) {
+    std::string b = bind;
+    std::transform(b.begin(), b.end(), b.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return b == "127.0.0.1" || b == "localhost" || b == "::1";
+}
+
+Status enforceBindPolicy(const Config& cfg, bool allowRemote) {
+    if (allowRemote || isLoopbackBind(cfg.proxy.bind)) return Status::Ok();
+    return Status::Fail("bind " + cfg.proxy.bind +
+                        " 不是回环地址；确认要暴露到网络时请显式加 --allow-remote");
 }
 
 std::string resolveRunInput(const std::string& arg, const Config& cfg) {

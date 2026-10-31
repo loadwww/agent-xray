@@ -14,6 +14,7 @@
 #include "chain/run.h"
 #include "chain/superstep.h"
 #include "chain/validate.h"
+#include "cli/cli_common.h"
 #include "common/hash.h"
 #include "common/log.h"
 #include "config/config.h"
@@ -398,6 +399,51 @@ void testUsageObserved(TestCtx& t) {
     t.check(zeroUsage.ok() && zeroUsage.value.usage.observed, "P2-9 上游明确给 0 token 仍算观测到");
 }
 
+// P2-13 采集模式与隐私：summary 不落正文、脱敏词表扩充、run 目录 0700、非回环 bind 需显式开关
+void testCapturePrivacy(TestCtx& t) {
+    auto dflt = parseConfigText("proxy:\n");
+    t.check(dflt.ok() && dflt.value.proxy.capture == "full", "P2-13 capture 默认 full");
+    auto sum = parseConfigText("proxy:\n  capture: summary\n");
+    t.check(sum.ok() && sum.value.proxy.capture == "summary", "P2-13 capture 可配置 summary");
+    auto bogus = parseConfigText("proxy:\n  capture: bogus\n");
+    t.check(bogus.ok() && bogus.value.proxy.capture == "full", "P2-13 未知 capture 回落 full");
+
+    const std::string marker = summarizeBody("hello");
+    t.check(marker.find("size=5") != std::string::npos, "P2-13 summary 记录长度");
+    t.check(marker.find(sha256Hex("hello").substr(0, 16)) != std::string::npos,
+            "P2-13 summary 记录 sha256 前 16 位");
+    t.check(marker.find("hello") == std::string::npos, "P2-13 summary 不含正文");
+
+    Config cfg = defaultConfig();
+    t.check(cfg.redact.patterns.size() == 4, "P2-13 默认脱敏词表 4 条");
+    const std::string body =
+        R"({"api_key": "abcdefgh12345678", "note": "Bearer abcdefgh12345678", "x-api-key": "zzzzzzzz12345678"})";
+    const std::string red = redactBody(body, cfg.redact.patterns);
+    t.check(red.find("abcdefgh12345678") == std::string::npos, "P2-13 api_key 值被脱敏");
+    t.check(red.find("zzzzzzzz12345678") == std::string::npos, "P2-13 x-api-key 值被脱敏");
+    t.check(red.find("Bearer") == std::string::npos, "P2-13 Bearer token 被脱敏");
+
+    t.check(isLoopbackBind("127.0.0.1") && isLoopbackBind("LOCALHOST") && isLoopbackBind("::1"),
+            "P2-13 回环 bind 识别");
+    t.check(!isLoopbackBind("0.0.0.0") && !isLoopbackBind("192.168.1.5"), "P2-13 非回环 bind 识别");
+    Config remote = defaultConfig();
+    remote.proxy.bind = "0.0.0.0";
+    t.check(!enforceBindPolicy(remote, false).ok(), "P2-13 非回环 bind 未加 --allow-remote 被拒绝");
+    t.check(enforceBindPolicy(remote, true).ok(), "P2-13 --allow-remote 放行");
+    t.check(enforceBindPolicy(defaultConfig(), false).ok(), "P2-13 默认回环 bind 放行");
+
+#ifndef _WIN32
+    namespace fs = std::filesystem;
+    const fs::path tmp = fs::temp_directory_path() / ("axr-p13-" + makeSessionId());
+    fs::create_directories(tmp);
+    const std::string dir = ensureRunDir(tmp.string(), "20261030-160000-p13x");
+    std::error_code ec;
+    const auto perms = fs::status(dir, ec).permissions();
+    t.check(!ec && perms == fs::perms::owner_all, "P2-13 run 目录权限 0700");
+    fs::remove_all(tmp);
+#endif
+}
+
 // 统计 Mermaid 里的节点定义行（S*/Sc* 矩形与 T* 菱形）
 int mermaidNodeCount(const std::string& mmd) {
     int n = 0;
@@ -668,6 +714,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     testUsageObserved(t);
     testM4Units(t, dir);
     testWebUi(t, dir);
+    testCapturePrivacy(t);
 
     // T1 普通对话
     testFixture(dir, "t1_simple", t, [&](const ChainResult& cr) {

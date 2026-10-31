@@ -15,4 +15,7 @@ std::map<std::string, std::string> redactHeaders(const std::map<std::string, std
 // 按配置的正则（ECMAScript）替换 body 中的密钥
 std::string redactBody(const std::string& body, const std::vector<std::string>& patterns);
 
+// P2-13 summary 采集模式：不落正文，只保留长度 + sha256 前 16 位
+std::string summarizeBody(const std::string& body);
+
 } // namespace axr

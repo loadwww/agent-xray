@@ -26,6 +26,8 @@ struct Config {
         long long maxRunBytes = 256LL * 1024 * 1024;
         int maxQueue = 10000;
         bool injectUsage = true; // 流式请求自动补 stream_options.include_usage（§7.2.3，P2-8 默认开）
+        // P2-13 采集模式：full 存正文；summary 只存长度 + sha256 前 16 位
+        std::string capture = "full";
         // 工具失败文本词表（P2-7）：配置后整体覆盖内置词表
         std::vector<std::string> toolErrorPatterns;
         std::vector<UpstreamDef> upstreams;
@@ -40,7 +42,10 @@ struct Config {
 
     struct RedactCfg {
         std::vector<std::string> headers{"authorization", "x-api-key", "api-key"};
-        std::vector<std::string> patterns{"sk-[A-Za-z0-9]{20,}"};
+        // P2-13：默认覆盖 sk- 密钥、Bearer token 与 api_key / x-api-key 赋值
+        std::vector<std::string> patterns{"sk-[A-Za-z0-9]{20,}", "Bearer [A-Za-z0-9._~+/=-]{8,}",
+                                          "api_key[\"']?\\s*[:=]\\s*[\"']?[A-Za-z0-9._~+/=-]{8,}",
+                                          "x-api-key[\"']?\\s*[:=]\\s*[\"']?[A-Za-z0-9._~+/=-]{8,}"};
         bool pii = false;
     } redact;
 

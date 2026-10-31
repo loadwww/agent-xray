@@ -14,17 +14,25 @@ int cmdRun(const std::vector<std::string>& args) {
     auto parsed = parseProxyArgs(args, opts);
     if (!parsed.ok()) {
         std::cerr << "错误: " << parsed.err << "\n"
-                  << "用法: axr run [--config config.yaml] [--root dir] [--listen port] -- <command...>\n";
+                  << "用法: axr run [--config config.yaml] [--root dir] [--listen port] [--bind host]"
+                     " [--allow-remote] -- <command...>\n";
         return 2;
     }
     if (opts.command.empty()) {
-        std::cerr << "用法: axr run [--config config.yaml] [--root dir] [--listen port] -- <command...>\n";
+        std::cerr << "用法: axr run [--config config.yaml] [--root dir] [--listen port] [--bind host]"
+                     " [--allow-remote] -- <command...>\n";
         return 2;
     }
 
     auto cfg = loadEffectiveConfig(opts);
     if (!cfg.ok()) {
         logError("run", cfg.err);
+        return 2;
+    }
+
+    auto bindOk = enforceBindPolicy(cfg.value, opts.allowRemote);
+    if (!bindOk.ok()) {
+        logError("run", bindOk.err);
         return 2;
     }
 

@@ -77,8 +77,9 @@ cmake --build build -j
   下次可以直接拿两份 run 做结构 diff，看是哪一步开始跑偏。
 - **数据只说真话**：token 直接取上游响应的 `usage`（含 DeepSeek 缓存命中数），没有就显示 `-`，不估算；
   上游不返回账单，所以不展示金额，需要金额请用服务商后台或自己乘单价。
-- **不侵入你的环境**：只监听本机回环，落盘副本自动脱敏（`authorization` / `x-api-key` / `sk-...`），
-  原始请求照常转发，鉴权与流式体验都不受影响。
+- **不侵入你的环境**：默认只监听本机回环，落盘副本自动脱敏（`authorization` / `x-api-key` / `api-key`
+  头，`sk-...` / `Bearer` / `api_key` 值）；需要彻底不存正文时设 `proxy.capture: summary`，
+  `events.jsonl` 只留长度与 sha256 前 16 位。确需对外监听时要显式加 `--allow-remote`。
 
 ## 能拿它做什么
 
@@ -151,6 +152,8 @@ proxy:
   inject_usage: true      # 默认开：流式请求补 stream_options.include_usage，否则拿不到 token；
                           # 上游 400 拒绝时自动去掉并重试，meta 记 usage_injected:false
 
+  capture: full           # full 落盘请求/响应正文；summary 只存长度 + sha256 前 16 位
+
   tool_error_patterns:    # 工具失败文本词表（不配置则用内置词表；配置后整体覆盖）
     - "error:"
     - "permission denied"
@@ -176,7 +179,10 @@ proxy:
 - 用 `Observation:` 文本回填工具结果的框架（如 smolagents），能还原工具调用与扇出，但**结果内容**落在
   下一条消息正文里，工具表的结果会显示 `-`。
 - 并行子 agent 交错写同一 messages 链时，分支归属可能误判；建议把可疑分支拆成独立 run。
-- 只监听本机回环，无鉴权；请勿暴露到公网。
+- 只监听本机回环，无鉴权；请勿暴露到公网。确要监听非回环地址必须显式加 `--allow-remote`，
+  并自行保证网络边界。Linux / macOS 下 run 目录权限为 0700（仅属主可读写）。
+- `proxy.capture: summary` 只保留请求/响应正文的长度与 sha256 前缀，因此对应 run 无法还原
+  消息内容（会计入 `parse_failed`），适合只想看调用规模 / 时间的隐私敏感场景。
 - `proxy.max_body_bytes` 超限的请求由 HTTP 层直接回 413，代理拿不到完整请求体，因此不产生事件（宁可少记也不占内存）。
 
 ## 待办

@@ -31,6 +31,16 @@ std::string truncateCopy(const std::string& s, long long maxBytes, bool& truncat
     return s.substr(0, static_cast<std::size_t>(maxBytes));
 }
 
+// P2-13：落盘前先脱敏；summary 模式只留长度 + sha256 前 16 位，不存正文
+std::string captureBody(const std::string& body, const Config& cfg, bool& truncated) {
+    const std::string redacted = redactBody(body, cfg.redact.patterns);
+    if (cfg.proxy.capture == "summary") {
+        truncated = false;
+        return summarizeBody(redacted);
+    }
+    return truncateCopy(redacted, cfg.proxy.maxBodyBytes, truncated);
+}
+
 // S2 真流式转发的线程间桥：上游读取线程 push，httplib chunked provider 阻塞取（§7.1.4）
 class StreamBridge {
 public:
@@ -257,8 +267,7 @@ void ReverseProxySource::handle(const httplib::Request& req, httplib::Response& 
     }
 
     bool reqTruncated = false;
-    const std::string reqForRecord =
-        truncateCopy(redactBody(forwardBody, cfg_.redact.patterns), cfg_.proxy.maxBodyBytes, reqTruncated);
+    const std::string reqForRecord = captureBody(forwardBody, cfg_, reqTruncated);
 
     Event reqEv;
     reqEv.kind = "req";
@@ -312,7 +321,7 @@ void ReverseProxySource::handle(const httplib::Request& req, httplib::Response& 
     respEv.hop = hop;
     respEv.status = fwd.status;
     respEv.latencyMs = fwd.latencyMs;
-    respEv.respBody = truncateCopy(redactBody(fwd.body, cfg_.redact.patterns), cfg_.proxy.maxBodyBytes, respTruncated);
+    respEv.respBody = captureBody(fwd.body, cfg_, respTruncated);
     respEv.truncated = respTruncated;
     emit(respEv);
 
@@ -342,12 +351,14 @@ void ReverseProxySource::handleStream(const ForwardRequest& fr, const ForwardReq
     const bool hasFallback = fallbackFr != nullptr;
     const ForwardRequest fallback = hasFallback ? *fallbackFr : ForwardRequest{};
     std::atomic<bool>* usageDisabled = &usageInjectionDisabled_;
-    bridge->start(std::thread([bridge, fr, fallback, hasFallback, hop, emitFn, usageDisabled] {
+    const bool captureSummary = cfg_.proxy.capture == "summary";
+    bridge->start(std::thread([bridge, fr, fallback, hasFallback, hop, emitFn, usageDisabled, captureSummary] {
         auto emitChunk = [&](const std::string& chunk) {
             Event ce;
             ce.kind = "sse_chunk";
             ce.hop = hop;
-            ce.data = chunk;
+            // P2-13 summary 模式同样不落流式正文
+            ce.data = (captureSummary && !chunk.empty()) ? summarizeBody(chunk) : chunk;
             if (emitFn) emitFn(ce);
             bridge->push(chunk);
         };

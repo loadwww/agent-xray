@@ -4,6 +4,7 @@
 #include <cctype>
 #include <regex>
 
+#include "common/hash.h"
 #include "common/log.h"
 
 namespace axr {
@@ -48,6 +49,13 @@ std::string redactBody(const std::string& body, const std::vector<std::string>& 
         }
     }
     return out;
+}
+
+std::string summarizeBody(const std::string& body) {
+    // 形如 [capture:summary size=123 sha256=abcdef0123456789]；刻意不是 JSON，
+    // 避免被误当成正文再次解析
+    const std::string h = sha256Hex(body);
+    return "[capture:summary size=" + std::to_string(body.size()) + " sha256=" + h.substr(0, 16) + "]";
 }
 
 } // namespace axr

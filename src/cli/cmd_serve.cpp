@@ -50,13 +50,20 @@ int cmdServe(const std::vector<std::string>& args) {
     auto parsed = parseProxyArgs(args, opts);
     if (!parsed.ok() || !opts.command.empty()) {
         std::cerr << (parsed.ok() ? "错误: serve 不接受 -- 之后的命令\n" : ("错误: " + parsed.err + "\n"))
-                  << "用法: axr serve [--config config.yaml] [--root dir] [--listen port] [--bind host]\n";
+                  << "用法: axr serve [--config config.yaml] [--root dir] [--listen port] [--bind host]"
+                     " [--allow-remote]\n";
         return 2;
     }
 
     auto cfg = loadEffectiveConfig(opts);
     if (!cfg.ok()) {
         logError("serve", cfg.err);
+        return 2;
+    }
+
+    auto bindOk = enforceBindPolicy(cfg.value, opts.allowRemote);
+    if (!bindOk.ok()) {
+        logError("serve", bindOk.err);
         return 2;
     }
 

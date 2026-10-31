@@ -110,6 +110,10 @@ void applyScalar(Config& cfg, const std::string& section, const std::string& key
         else if (key == "max_run_bytes") cfg.proxy.maxRunBytes = toLL(v, cfg.proxy.maxRunBytes);
         else if (key == "max_queue") cfg.proxy.maxQueue = toInt(v, cfg.proxy.maxQueue);
         else if (key == "inject_usage") cfg.proxy.injectUsage = toBool(v, cfg.proxy.injectUsage);
+        else if (key == "capture") {
+            if (v == "full" || v == "summary") cfg.proxy.capture = v;
+            else logWarn("config", "proxy.capture 只支持 full|summary，已忽略: " + v);
+        }
         else if (key == "tool_error_patterns") cfg.proxy.toolErrorPatterns = parseInlineList(v);
     } else if (section == "chain") {
         if (key == "run_gap_minutes") cfg.chain.runGapMinutes = toInt(v, cfg.chain.runGapMinutes);
