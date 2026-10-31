@@ -102,6 +102,14 @@ cmake --build build -j
 - 顺带修复：`upstreams:` 列表之后的 proxy 键（如 `inject_usage`）被吞进最后一个 upstream 的问题
 - 验收：Windows / WSL Linux selftest 229 全过
 
+### P2-8 inject_usage 默认开 + 自动降级 — commit `3b442f9`
+- `proxy.inject_usage` 默认改为 true（config.h / config.yaml / README 同步）
+- 上游流式请求若返回 400 且响应体含 `stream_options`：`injectStreamUsage` 的那次转发先压住响应，
+  去掉注入后重试一次；客户端无感，`meta.json` 记 `usage_injected:false`（`rewritten` 仍记 true）
+- 降级判定抽成 `inject.cpp::shouldRetryWithoutUsage`，selftest 覆盖默认开关/400/500 分支
+- e2e：mock_openai 新增 `__mode/usage_reject`，Windows/Linux 各加一条降级用例
+- 验收：selftest 234 全过；Windows e2e 与 WSL `e2e_proxy.sh` 全过
+
 ## 三、关键代码事实（供下一个对话快速定位）
 
 - 转发层平台实现：`src/proxy/forward_winhttp.cpp`（`#ifdef _WIN32`）+ `src/proxy/forward_curl.cpp`（其它平台，libcurl）
@@ -119,9 +127,8 @@ cmake --build build -j
 
 ### 第三批（P2-7 ~ P2-12 低成本准确性）
 
-> P2-7 已完成（见第二节）。
+> P2-7、P2-8 已完成（见第二节）。
 
-- **P2-8 inject_usage 默认开 + 自动降级**：默认 true；上游 400 含 stream_options 字样时去掉重试，meta 记 `usage_injected:false`
 - **P2-9 区分 0 token 与未观测**：`Usage.observed`；!observed 显示 "—"
 - **P2-10 run id 防撞**：追加 4 位随机或 session 序号（如 `...-f33017ac-7d2e`）；selftest id 断言同步更新；旧 id 仍可读
 - **P2-11 工具耗时来源标注**：`ToolExec.durationSource = inferred|mcp|otel`；UI "~" 只用于 inferred
