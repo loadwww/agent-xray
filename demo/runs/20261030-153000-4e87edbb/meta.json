@@ -1,0 +1,31 @@
+{
+  "id": "20261030-153000-4e87edbb",
+  "primary": "20261030-153000-4e87edbb-0000",
+  "started_at": "2026-10-30T15:30:00.100+08:00",
+  "status": "complete",
+  "incomplete": false,
+  "step_count": 6,
+  "tool_count": 6,
+  "fail_tools": 2,
+  "request_count": 6,
+  "retry_count": 0,
+  "total_tokens": 8100,
+  "usage_observed": true,
+  "models": ["demo-coder"],
+  "report": "report.md",
+  "usage_injected": true,
+  "runs": [
+    {
+      "id": "20261030-153000-4e87edbb-0000",
+      "started_at": "2026-10-30T15:30:00.100+08:00",
+      "steps": 6,
+      "tools": 6,
+      "tokens": 8100,
+      "usage_observed": true,
+      "requests": 6,
+      "retries": 0,
+      "fuzzy_edges": 0,
+      "incomplete": false
+    }
+  ]
+}

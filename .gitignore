@@ -20,6 +20,10 @@ runs/
 *.xray/
 .events.jsonl
 
+# ---- demo 内置示例是源码资产（A2），例外放行 ----
+!demo/runs/
+!demo/runs/**/*.json
+
 # ---- 编辑器 / 系统 ----
 .vs/
 .vscode/

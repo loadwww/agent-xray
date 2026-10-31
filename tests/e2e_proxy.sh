@@ -183,6 +183,30 @@ fi
 ALL_DIRS=$(ls -1 "$SERVE_ROOT/runs" 2>/dev/null | wc -l | tr -d ' ')
 [ "$ALL_DIRS" -eq 1 ]; check "$?" "两轮 serve 只留下有流量的 1 个会话（实际 $ALL_DIRS）"
 
+echo "[7] A1 axr demo：离线示例、--diff、退出清理临时目录"
+DEMO_TMP="$BUILD/e2e-demo-tmp"
+rm -rf "$DEMO_TMP"; mkdir -p "$DEMO_TMP"
+DEMO_DIFF=$(XDG_CACHE_HOME= TMPDIR="$DEMO_TMP" "$AXR" demo --diff 2>&1)
+DEMO_DIFF_RC=$?
+check "$DEMO_DIFF_RC" "demo --diff 退出码 0"
+echo "$DEMO_DIFF" | grep -q "run B" ; check "$?" "demo --diff 输出包含 run B"
+echo "$DEMO_DIFF" | grep -q "工具差异"; check "$?" "demo --diff 输出包含工具差异"
+LEFTOVER=$(find "$DEMO_TMP" -name 'axr-demo-*' 2>/dev/null | wc -l | tr -d ' ')
+[ "$LEFTOVER" -eq 0 ]; check "$?" "demo --diff 退出后无临时目录残留（实际 $LEFTOVER）"
+
+XDG_CACHE_HOME= TMPDIR="$DEMO_TMP" "$AXR" demo --no-open --port 8791 > "$BUILD/e2e-demo.log" 2>&1 &
+DEMO_PID=$!
+wait_port 8791
+DEMO_RUNS=$(curl -s -m 2 "http://127.0.0.1:8791/__xray/api/runs" 2>/dev/null)
+echo "$DEMO_RUNS" | grep -q "20261030-153000-4e87edbb"; check "$?" "demo 页面列出示例 run B"
+echo "$DEMO_RUNS" | grep -q "20261030-150000-4e87edbb"; check "$?" "demo 页面列出示例 run A"
+kill -INT "$DEMO_PID" 2>/dev/null
+wait "$DEMO_PID" 2>/dev/null
+DEMO_RC=$?
+check "$DEMO_RC" "demo SIGINT 退出码 0"
+LEFTOVER=$(find "$DEMO_TMP" -name 'axr-demo-*' 2>/dev/null | wc -l | tr -d ' ')
+[ "$LEFTOVER" -eq 0 ]; check "$?" "demo SIGINT 退出后临时目录已清理（实际 $LEFTOVER）"
+
 if [ "$FAIL" -gt 0 ]; then
     echo
     echo "结果: $FAIL 项失败"

@@ -19,6 +19,7 @@ const char* kVersion = "0.4.1";
 void printUsage() {
     std::cout << "AgentXray " << kVersion << "\n\n"
               << "用法:\n"
+              << "  axr demo [--port 8787] [--no-open] [--diff]\n"
               << "  axr serve [--config config.yaml] [--root dir] [--listen port] [--bind host]\n"
               << "            [--allow-remote]\n"
               << "  axr run [--config config.yaml] [--root dir] [--listen port] [--allow-remote]\n"
@@ -62,6 +63,7 @@ int runCli(int argc, char** argv) {
         return 0;
     }
     if (cmd == "replay") return cmdReplay(rest);
+    if (cmd == "demo") return cmdDemo(rest);
     if (cmd == "selftest") return cmdSelftest(rest);
     if (cmd == "serve") return cmdServe(rest);
     if (cmd == "run") return cmdRun(rest);
