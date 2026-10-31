@@ -1,6 +1,8 @@
-// spawnWithEnv 的 Linux/macOS 实现（fork + execve，P1-4）
+// spawnWithEnv 的 Linux/macOS 实现（posix_spawn，P1-4 / WP7）
 // 与 Windows 版对齐的语义：继承控制台、等待子进程结束、返回退出码；
-// 额外环境变量只作用于子进程（execve 传独立 envp，不改父进程 environ）。
+// 额外环境变量只作用于子进程（独立 envp，不改父进程 environ）。
+// 用 posix_spawn 而不是 fork+exec：本进程是多线程的，fork 后子进程在 exec 前
+// 构造 std::string / 调 write 都不是 async-signal-safe，可能与其它线程的 malloc 死锁。
 #include "proxy/runner.h"
 
 #include <map>
@@ -11,6 +13,7 @@
 #include <cerrno>
 #include <cstring>
 
+#include <spawn.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -83,16 +86,11 @@ Result<int> spawnWithEnv(const std::vector<std::string>& argv, const std::map<st
     for (const auto& e : env) envPtrs.push_back(const_cast<char*>(e.c_str()));
     envPtrs.push_back(nullptr);
 
-    const pid_t pid = fork();
-    if (pid < 0) return Result<int>::Fail("fork 失败: " + std::string(std::strerror(errno)));
-    if (pid == 0) {
-        // 子进程：继承控制台；execve 带独立环境（argv[0] 保留原名语义）
-        execve(prog.c_str(), argPtrs.data(), envPtrs.data());
-        std::string msg = "execve 失败（" + std::string(std::strerror(errno)) + "）: " + prog;
-        const ssize_t _ = ::write(STDERR_FILENO, msg.data(), msg.size());
-        (void)_;
-        _exit(127);
-    }
+    // posix_spawn：文件动作/属性都用默认（继承控制台、继承 fd），
+    // 返回值直接是 errno（不会在子进程里拼错误字符串）
+    pid_t pid = 0;
+    const int spawnRc = posix_spawn(&pid, prog.c_str(), nullptr, nullptr, argPtrs.data(), envPtrs.data());
+    if (spawnRc != 0) return Result<int>::Fail("posix_spawn 失败: " + std::string(std::strerror(spawnRc)));
 
     int status = 0;
     if (waitpid(pid, &status, 0) < 0) {

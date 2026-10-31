@@ -107,6 +107,15 @@ std::string tokensText(int tokens, bool observed) {
 } // namespace
 
 int cmdList(const std::vector<std::string>& args) {
+    for (const auto& a : args) {
+        if (a == "--help" || a == "-h") {
+            std::cout << "用法: axr list [--root dir] [--config config.yaml] [--json] [--all]\n"
+                         "  --all   按 run 平铺（同一 session 的多个 run 各占一行）\n"
+                         "  --json  JSON 输出\n"
+                         "  --root dir  采集根目录（默认取配置 storage.root）\n";
+            return 0;
+        }
+    }
     ListOpts opts;
     Status st = parseListArgs(args, opts);
     if (!st.ok()) {

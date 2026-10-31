@@ -115,10 +115,10 @@ RunSummary finalizeRun(const std::string& runDir, const Config& cfg, long long d
         return s;
     }
 
-    // 主 run：步数最多的那条；并列时取开始最早的
+    // 主 run：步数最多的那条；并列时取开始最早（严格大于，与 primaryRun 保持一致）
     Run* primary = &chain.value.runs.front();
     for (auto& r : chain.value.runs) {
-        if (r.steps.size() >= primary->steps.size()) primary = &r;
+        if (r.steps.size() > primary->steps.size()) primary = &r;
     }
 
     s.runId = primary->id;

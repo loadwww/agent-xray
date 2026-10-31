@@ -77,6 +77,16 @@ void printRun(const Run& run) {
 } // namespace
 
 int cmdShow(const std::vector<std::string>& args) {
+    for (const auto& a : args) {
+        if (a == "--help" || a == "-h") {
+            std::cout << "用法: axr show <run目录|events.jsonl|sessionID|runID> [--run runId]\n"
+                         "                [--config config.yaml] [--root dir] [--bench]\n"
+                         "  --run runId   只看指定 run（多 run session 里的非主 run）\n"
+                         "  --root dir    采集根目录（默认取配置 storage.root）\n"
+                         "  --bench       打印建链耗时\n";
+            return 0;
+        }
+    }
     ShowOpts opts;
     Status st = parseShowArgs(args, opts);
     if (!st.ok()) {

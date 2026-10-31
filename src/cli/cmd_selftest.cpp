@@ -1336,6 +1336,22 @@ int cmdSelftest(const std::vector<std::string>& args) {
         }
     }
 
+    // WP7：主 run 并列（步数相同）时应取开始最早的一条
+    {
+        ChainResult cr;
+        Run early;
+        early.id = "early";
+        early.startedAt = "2026-10-30T10:00:00.000+08:00";
+        early.steps.resize(2);
+        Run late = early;
+        late.id = "late";
+        late.startedAt = "2026-10-30T10:00:05.000+08:00";
+        cr.runs.push_back(early);
+        cr.runs.push_back(late);
+        const Run* p = primaryRun(cr);
+        t.check(p != nullptr && p->id == "early", "WP7 主 run 步数并列时取最早");
+    }
+
     std::cout << "\n结果: " << t.pass << " passed, " << t.fail << " failed\n";
     return t.fail == 0 ? 0 : 1;
 }

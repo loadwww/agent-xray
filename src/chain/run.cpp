@@ -206,8 +206,9 @@ ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts, con
 const Run* primaryRun(const ChainResult& cr) {
     if (cr.runs.empty()) return nullptr;
     const Run* best = &cr.runs.front();
+    // 步数相同时保留最早的一条（用严格大于；>= 会取最后一条，与注释不符）
     for (const auto& r : cr.runs)
-        if (r.steps.size() >= best->steps.size()) best = &r;
+        if (r.steps.size() > best->steps.size()) best = &r;
     return best;
 }
 
