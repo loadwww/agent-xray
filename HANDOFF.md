@@ -8,7 +8,7 @@
 
 - 仓库：`https://github.com/loadwww/agent-xray`，`master` 分支，HEAD = `9c7e73e`
 - 语言：C++17；依赖只有 `third_party/nlohmann/json.hpp` 与 `third_party/cpp-httplib/httplib.h`（header-only）
-- 基线 selftest：174 项；当前 **243 passed / 0 failed**（Windows 与 WSL Linux 均实测）
+- 基线 selftest：174 项；当前 **250 passed / 0 failed**（Windows 与 WSL Linux 均实测）
 - 工作单原文：`agent-xray-improvement-plan.txt`（完整任务清单在下方第四节引用）
 
 ### 构建命令
@@ -125,6 +125,13 @@ cmake --build build -j
 - selftest：T14 增加 id 格式、同链唯一、重复建链稳定三条断言
 - 验收：Windows / WSL Linux selftest 243 全过
 
+### P2-11 工具耗时来源标注 — commit `280b305`
+- `ToolExec.approx` → `durationSource`（`inferred|mcp|otel`），JSON 写 `duration_source`
+- 流量链路（`chain/superstep.cpp`）写 `inferred`；旧 `run.json` 只有 `approx`、无该字段或值未知时回落 `inferred`
+- 展示层：`graph/mermaid.cpp`、`report.cpp`、Web UI（流程图标签 / 工具 chip / Step 明细）只在 `inferred` 时加 `~`
+- selftest：序列化保留来源、旧 approx 回退、未知值回落、mermaid/report 的 `~` 门控
+- 验收：Windows / WSL Linux selftest 250 全过
+
 ## 三、关键代码事实（供下一个对话快速定位）
 
 - 转发层平台实现：`src/proxy/forward_winhttp.cpp`（`#ifdef _WIN32`）+ `src/proxy/forward_curl.cpp`（其它平台，libcurl）
@@ -142,9 +149,8 @@ cmake --build build -j
 
 ### 第三批（P2-7 ~ P2-12 低成本准确性）
 
-> P2-7、P2-8、P2-9、P2-10 已完成（见第二节）。
+> P2-7、P2-8、P2-9、P2-10、P2-11 已完成（见第二节）。
 
-- **P2-11 工具耗时来源标注**：`ToolExec.durationSource = inferred|mcp|otel`；UI "~" 只用于 inferred
 - **P2-12 修正 OLLAMA_HOST 注入**：删除注入，或 README 明确用 `/ollama/v1`；e2e 覆盖
 
 ### 第四批（P2-13 ~ P2-16 隐私/性能/运维）
