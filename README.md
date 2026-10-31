@@ -10,6 +10,17 @@
 - 留得下：`events.jsonl` / `run.json` / `graph.mmd` / `report.md` 全部落盘，可回放、可比对
 - 单文件：一个 `axr.exe`，静态链接，UI 内嵌，离线可用
 
+## 30 秒上手（离线 demo，不需要 API key）
+
+```bash
+axr demo
+```
+
+内置两次示例 run：run A 一次做对，run B 改错文件后绕圈并失败。命令会把示例释放到临时目录、
+启动内嵌 Web UI 并自动打开浏览器；`axr demo --diff` 直接在终端看两次运行的步骤 / 工具差异。
+
+![axr demo：终端启动 → 执行图 → 两次运行 diff](docs/demo.gif)
+
 ## 支持矩阵
 
 | 维度 | 支持 | 已知不支持 |

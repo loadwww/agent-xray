@@ -129,8 +129,28 @@ bool loadDemoRun(const std::filesystem::path& dir, Run& run, std::string& err) {
 }
 
 std::string clip(const std::string& s, std::size_t maxLen = 60) {
-    if (s.size() <= maxLen) return s;
-    return s.substr(0, maxLen) + "…";
+    // 多行工具结果先压成单行，否则 diff 行会被换行撑散
+    std::string flat;
+    bool prevSpace = false;
+    for (char c : s) {
+        const bool isSpace = c == '\n' || c == '\r' || c == '\t' || c == ' ';
+        if (isSpace) {
+            if (!prevSpace && !flat.empty()) flat += ' ';
+            prevSpace = true;
+        } else {
+            flat += c;
+            prevSpace = false;
+        }
+    }
+    while (!flat.empty() && flat.back() == ' ') flat.pop_back();
+    std::size_t chars = 0;
+    for (std::size_t i = 0; i < flat.size(); ++i) {
+        if ((flat[i] & 0xC0) != 0x80) { // 只在 UTF-8 字符边界计数，避免截断半个汉字
+            if (chars == maxLen) return flat.substr(0, i) + "…";
+            ++chars;
+        }
+    }
+    return flat;
 }
 
 void printStepDelta(const StepDelta& d) {
