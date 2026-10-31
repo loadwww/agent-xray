@@ -43,6 +43,19 @@ Start-Process axr -ArgumentList 'serve','--listen','8080' -WorkingDirectory D:\a
 `config.yaml` 默认从**当前目录**读取；不在仓库目录时用 `--config D:\agent-xray\config.yaml`
 （否则会静默使用内置默认上游，你的 `model_map` 等配置不生效）。
 
+## 构建（Linux/macOS）
+
+Python 侧无依赖，只需要 C++17 编译器与 CMake；Ubuntu/Debian 先 `sudo apt install cmake g++ libcurl4-openssl-dev`
+（macOS 装 Xcode Command Line Tools 即可）。然后三条命令：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+./build/axr selftest          # selftest 不会随 cmake 自动跑，手动执行，全部通过即构建完整
+```
+
+产物是单个 `./build/axr` 与 `./build/mock_openai`；`bash tests/e2e_proxy.sh` 可离线跑一遍采集验收。
+
 ## 为什么实用
 
 - **一眼定位失败**：工具结果带 `Error` / `403` / `Forbidden` / `Failed to` / `too much output` 等特征时
