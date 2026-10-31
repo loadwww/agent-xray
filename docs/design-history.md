@@ -1,5 +1,10 @@
 # AgentXray — 零改造 Agent 执行流程逆向与可视化系统
 
+> 历史参考文档：本文是 2026-10 施工期的设计规格书，部分细节已与当前实现不一致
+> （目录结构、里程碑、CLI 细节等以代码为准）。当前实现的权威描述见
+> [ARCHITECTURE.md](ARCHITECTURE.md)；本文保留的价值是设计背景与决策理由
+> （为什么用 C++17、为什么反向代理而非 MITM、链式哈希为何必要等）。
+
 > 工作名：AgentXray（可改）。CLI 名：`axr`。
 > **实现语言：C++17**。采集模式：**Mode A（反向代理）**。
 > 本文档是给执行方（另一个对话）的施工规格书，不是介绍文章。`必须/禁止` 均为硬约束。
@@ -1115,27 +1120,6 @@ fixtures 目录纳入版本控制。任何修改 chain/parse 的提交，先跑 
 | 用户机器没有 CMake / 编译器 | 中 | 装不上 | README 给 vcpkg + VS2022 的 5 步命令；不提供 pip/单文件分发（第一版） |
 | 磁盘写爆 | 低 | 占满 | `max_run_bytes` 硬上限 + `retention_days` + `axr prune` |
 | 隐私泄露（key 被写进 events） | 中 | 安全事故 | 落盘前 redact（header + `sk-` 正则），且**转发用原始 buffer**（见 §7.1 注意事项）。README 里显著提示"runs 目录可能含对话内容，勿提交" |
-
----
-
-## 13. 简历话术
-
-写简历时别写"我写了一个代理工具"，要写**技术难点 + 可量化结果**。以下是可直接改写的三条：
-
-> **AgentXray｜零改造 Agent 执行流观测工具（C++17，个人项目）**
-> - 基于**反向代理**方案捕获 Agent 与 LLM 的完整交互流量（`OPENAI_BASE_URL` 一行注入，无需证书、无需改 Agent 代码），兼容 OpenAI / DeepSeek / Ollama / vLLM 等 OpenAI 协议实现；
-> - 设计**滚动前缀哈希（Merkle 式链式 sha256）**把"判断请求 B 是否为请求 A 的续写"从 O(N²) 降到 O(N)，配合 superstep 合并与 0.9 阈值模糊匹配，将扁平的 HTTP 请求序列还原为 Agent 的「LLM 决策 → 工具执行」有向图，并从图直接生成 Mermaid 流程图；
-> - 实现流式（SSE）增量解析与转发：分片 `tool_calls.arguments` 按 index 增量拼接，代理侧用 chunked provider + 条件变量队列桥接 libcurl 回调线程与 HTTP 处理线程，保证流式语义与延迟不变；
-> - 做**完整性校验**：缺包时通过前缀链断裂定位断点并标记 `incomplete`，避免把残缺会话当成完整流程输出（这是纯流量视角方案的核心缺陷，也是本项目的主要设计取舍）；
-> - 实现按 `gen_ai` 语义的 token/成本归因（区分缓存命中与新增 prompt token），一键输出 markdown 报告（流程图 + 时间线 + 成本表），并支持两次 run 的 `diff` 对比。
-
-面试时最值得讲的三点（准备好被追问）：
-
-1. **为什么不用 MITM**：因为信任锚替换的摩擦成本太高（安装 CA、`REQUESTS_CA_BUNDLE`/`NODE_EXTRA_CA_CERTS`、HTTP/2、证书固定），而反向代理是"改变流量目的地"而不是"解密流量"，零证书、可改写请求（能顺手补 `stream_options.include_usage`）。代价是要求 Agent 愿意改一个 base URL。
-2. **和 LangGraph Studio 的区别**：LangGraph 是"上帝视角"（编译期已知静态图，要接 SDK、要写 checkpointer）；本项目是"流量视角"（运行期从 HTTP 反推，零接入），对 "Agent 用了框架"和"Agent 手写 while 循环" 一视同仁。代价是拿不到图内部状态，只能看到 LLM 的输入输出。
-3. **前缀哈希为什么必要**：LLM 无状态，每次请求都带全量 messages，第 N 步请求长度是 O(N)；朴素做法每条请求都拿全量 messages 去和所有历史比，总代价 O(N²·m)。滚动哈希让每条请求 O(m) 算出一个"指纹"，父子关系变成 O(1) 查表。
-
-**答不上的地方要老实说**：工具执行的真实耗时、Agent 内部变量、KV cache 命中率 —— 这三个是纯流量方案拿不到的，正是 Future 里 SDK 侵入 / OTel 通道要补的。
 
 ---
 

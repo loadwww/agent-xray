@@ -5,10 +5,18 @@
 `axr` 是一个本地反向代理 + 可视化工具。你照常启动自己的 Agent，它把每一轮请求 / 响应（含流式分片）
 录下来，还原成「主模型思考链路 + 工具调用扇出」，并在浏览器里**边跑边渲染**。
 
-- 零改造：不接 SDK、不改代码、不重打包，只改一个 `OPENAI_BASE_URL`
+- 零改造：不接 SDK、不改代码、不重打包，只改一个 `OPENAI_BASE_URL`（不挑框架，但需走 OpenAI 兼容 chat completions）
 - 看得懂：失败节点直接标红，顶部告诉你「最早在第几步受挫」
 - 留得下：`events.jsonl` / `run.json` / `graph.mmd` / `report.md` 全部落盘，可回放、可比对
 - 单文件：一个 `axr.exe`，静态链接，UI 内嵌，离线可用
+
+## 支持矩阵
+
+| 维度 | 支持 | 已知不支持 |
+|---|---|---|
+| 操作系统 | Windows x64（单文件静态构建）；Linux / macOS（cmake + libcurl 构建） | 32 位 Windows |
+| 协议 | OpenAI 兼容 chat completions（含流式 SSE），上游任意 HTTP/HTTPS | Responses API、Anthropic `/v1/messages`、embeddings、models 等端点：原样转发但不还原、不进统计 |
+| 接入方式 | 只改 `OPENAI_BASE_URL` 一行 | 不改 base URL 的 MITM 证书模式（本期不做） |
 
 ## 实际长什么样
 
