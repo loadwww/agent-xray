@@ -485,6 +485,72 @@ void testTruncatedSkipParse(TestCtx& t) {
     t.check(pairs2.ok() && pairs2.value[0].resp.latencyMs == 100, "P2-14 截断响应仍保留延迟");
 }
 
+// P2-15 增量读取 + 空闲收尾配置：只续读新字节、尾行不完整先不解析、重建后 run id 稳定
+void testLiveIncremental(TestCtx& t) {
+    auto on = parseConfigText("storage:\n  idle_finalize_minutes: 10\n");
+    t.check(on.ok() && on.value.storage.idleFinalizeMinutes == 10, "P2-15 空闲收尾分钟可配置");
+    auto off = parseConfigText("storage:\n  idle_finalize_minutes: 0\n");
+    t.check(off.ok() && off.value.storage.idleFinalizeMinutes == 0, "P2-15 空闲收尾可关闭");
+    t.check(defaultConfig().storage.idleFinalizeMinutes == 10, "P2-15 空闲收尾默认 10 分钟");
+
+    namespace fs = std::filesystem;
+    const fs::path tmp = fs::temp_directory_path() / ("axr-p15-" + makeSessionId());
+    fs::create_directories(tmp);
+    const std::string path = (tmp / "events.jsonl").string();
+
+    const std::string req1 =
+        R"ev({"seq":1,"ts":"2026-10-30T15:00:00.000+08:00","kind":"req","hop":"h-1","upstream":"https://api.deepseek.com/v1/chat/completions","req_body":"{\"model\":\"deepseek-chat\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}"})ev";
+    const std::string resp1 =
+        R"ev({"seq":2,"ts":"2026-10-30T15:00:01.000+08:00","kind":"resp","hop":"h-1","status":200,"latency_ms":100,"resp_body":"{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"hello\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":2}}"})ev";
+    const std::string req2 =
+        R"ev({"seq":3,"ts":"2026-10-30T15:00:02.000+08:00","kind":"req","hop":"h-2","upstream":"https://api.deepseek.com/v1/chat/completions","req_body":"{\"model\":\"deepseek-chat\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"},{\"role\":\"assistant\",\"content\":\"hello\"},{\"role\":\"user\",\"content\":\"again\"}]}"})ev";
+    const std::string resp2 =
+        R"ev({"seq":4,"ts":"2026-10-30T15:00:03.000+08:00","kind":"resp","hop":"h-2","status":200,"latency_ms":100,"resp_body":"{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":3}}"})ev";
+
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        out << req1 << "\n" << resp1 << "\n";
+    }
+
+    EventsTail tail;
+    auto p1 = tail.poll(path);
+    t.check(p1.ok() && p1.value && tail.events.size() == 2, "P2-15 首次读取全量事件");
+    auto c1 = buildChainFromRawEvents(tail.events);
+    t.check(c1.ok() && c1.value.runs.size() == 1 && c1.value.runs[0].steps.size() == 1,
+            "P2-15 首次建链 1 Step");
+    const std::string runId = c1.ok() && !c1.value.runs.empty() ? c1.value.runs[0].id : "";
+
+    auto p2 = tail.poll(path);
+    t.check(p2.ok() && !p2.value, "P2-15 文件未变不重复解析");
+
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::app);
+        out << req2 << "\n" << resp2 << "\n";
+    }
+    auto p3 = tail.poll(path);
+    t.check(p3.ok() && p3.value && tail.events.size() == 4, "P2-15 只续读新增事件");
+    auto c2 = buildChainFromRawEvents(tail.events);
+    t.check(c2.ok() && c2.value.runs.size() == 1 && c2.value.runs[0].steps.size() == 2,
+            "P2-15 追加后 Step 增长");
+    t.check(c2.ok() && !c2.value.runs.empty() && c2.value.runs[0].id == runId, "P2-15 增量重建 run id 稳定");
+
+    // 只写到一半的行先留在 pending，补齐换行后再解析
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::app);
+        out << req2.substr(0, 24);
+    }
+    auto p4 = tail.poll(path);
+    t.check(p4.ok() && !p4.value && tail.events.size() == 4, "P2-15 未写完的尾行不解析");
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::app);
+        out << req2.substr(24) << "\n";
+    }
+    auto p5 = tail.poll(path);
+    t.check(p5.ok() && p5.value && tail.events.size() == 5, "P2-15 补齐尾行后解析");
+
+    fs::remove_all(tmp);
+}
+
 // 统计 Mermaid 里的节点定义行（S*/Sc* 矩形与 T* 菱形）
 int mermaidNodeCount(const std::string& mmd) {
     int n = 0;
@@ -757,6 +823,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     testWebUi(t, dir);
     testCapturePrivacy(t);
     testTruncatedSkipParse(t);
+    testLiveIncremental(t);
 
     // T1 普通对话
     testFixture(dir, "t1_simple", t, [&](const ChainResult& cr) {

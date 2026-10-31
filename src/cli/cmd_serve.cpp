@@ -4,6 +4,8 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <thread>
 
 #include "cli/cli_common.h"
@@ -43,6 +45,105 @@ void printSummary(const RunSummary& s) {
     for (const auto& m : s.missing) std::cout << "  ! " << m << "\n";
 }
 
+// P2-15：一次 serve 可能跨多个「会话」。空闲超过阈值时把当前 events 收尾成 run 产物，
+// 再开一个新目录继续采，避免长驻进程攒出巨型 events.jsonl，也让已结束的任务先出现在列表里。
+class ServeSessions {
+public:
+    ServeSessions(const Config& cfg, ReverseProxySource& source) : cfg_(cfg), source_(source) {}
+
+    bool start() {
+        std::lock_guard<std::mutex> lk(mu_);
+        return beginLocked();
+    }
+
+    const std::string& runDir() const { return runDir_; }
+    const std::string& sessionId() const { return sessionId_; }
+
+    void push(const Event& e) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!rec_) {
+            logWarn("serve", "当前没有可写入的会话，事件已丢弃");
+            return;
+        }
+        rec_->push(e);
+        ++events_;
+        lastEvent_ = std::chrono::steady_clock::now();
+    }
+
+    // 空闲分钟数 <=0 时关闭自动收尾；当前会话还没收到任何事件也不轮转
+    void rotateIfIdle(int minutes) {
+        if (minutes <= 0) return;
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!rec_ || events_ == 0) return;
+        const auto idle = std::chrono::steady_clock::now() - lastEvent_;
+        if (idle < std::chrono::minutes(minutes)) return;
+
+        const std::string oldSid = sessionId_;
+        RunSummary s = finalizeLocked();
+        std::cout << "\n✓ 空闲 " << minutes << " 分钟，已收尾会话: " << oldSid << "\n";
+        printSummary(s);
+        if (s.status != "empty")
+            std::cout << "  流程图: " << (std::filesystem::path(s.runDir) / "graph.mmd").string() << "\n";
+
+        if (!beginLocked()) {
+            logError("serve", "无法创建新会话，后续事件将丢弃");
+            return;
+        }
+        std::cout << "  新会话: " << runDir_ << "（继续采集）\n";
+    }
+
+    void finish() {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (!rec_) return;
+        const std::string sid = sessionId_;
+        const RunSummary s = finalizeLocked();
+        std::cout << "✓ 采集完成\n  run: " << sid << "\n";
+        printSummary(s);
+        if (s.status != "empty")
+            std::cout << "  流程图: " << (std::filesystem::path(s.runDir) / "graph.mmd").string() << "\n";
+    }
+
+private:
+    bool beginLocked() {
+        const std::string sid = makeSessionId();
+        const std::string dir = ensureRunDir(cfg_.storage.root, sid);
+        if (dir.empty()) {
+            logError("serve", "无法创建 run 目录: " + cfg_.storage.root);
+            return false;
+        }
+        rec_ = std::make_unique<Recorder>((std::filesystem::path(dir) / "events.jsonl").string(),
+                                          cfg_.proxy.maxRunBytes, cfg_.proxy.maxQueue);
+        sessionId_ = sid;
+        runDir_ = dir;
+        events_ = 0;
+        baseDropped_ = rec_->dropped();
+        baseRewritten_ = source_.rewrittenRequests();
+        lastEvent_ = std::chrono::steady_clock::now();
+        return true;
+    }
+
+    // 调用前需持有 mu_；返回前会释放 Recorder（flush + 关闭 events.jsonl）
+    RunSummary finalizeLocked() {
+        rec_->flush();
+        const long long dropped = rec_->dropped() - baseDropped_;
+        const int rewritten = source_.rewrittenRequests() - baseRewritten_;
+        const RunSummary s = finalizeRun(runDir_, cfg_, dropped, rewritten, source_.usageInjectionDisabled());
+        rec_.reset();
+        return s;
+    }
+
+    const Config& cfg_;
+    ReverseProxySource& source_;
+    std::mutex mu_;
+    std::unique_ptr<Recorder> rec_;
+    std::string sessionId_;
+    std::string runDir_;
+    long long events_ = 0;
+    long long baseDropped_ = 0;
+    int baseRewritten_ = 0;
+    std::chrono::steady_clock::time_point lastEvent_{};
+};
+
 } // namespace
 
 int cmdServe(const std::vector<std::string>& args) {
@@ -67,44 +168,34 @@ int cmdServe(const std::vector<std::string>& args) {
         return 2;
     }
 
-    const std::string sessionId = makeSessionId();
-    const std::string runDir = ensureRunDir(cfg.value.storage.root, sessionId);
-    if (runDir.empty()) {
-        logError("serve", "无法创建 run 目录: " + cfg.value.storage.root);
-        return 1;
-    }
-
-    Recorder rec((std::filesystem::path(runDir) / "events.jsonl").string(), cfg.value.proxy.maxRunBytes,
-                 cfg.value.proxy.maxQueue);
     ReverseProxySource source(cfg.value);
-    if (!source.start([&rec](const Event& e) { rec.push(e); })) {
-        return 1;
-    }
+    ServeSessions sessions(cfg.value, source);
+    if (!sessions.start()) return 1;
+    if (!source.start([&sessions](const Event& e) { sessions.push(e); })) return 1;
 
     const std::string base = "http://" + cfg.value.proxy.bind + ":" + std::to_string(cfg.value.proxy.listen);
     std::cout << "AgentXray 代理已启动\n"
               << "  监听: " << base << "\n"
               << "  用法: OPENAI_BASE_URL=" << base << "/v1\n"
               << "  页面: " << base << "/__xray （浏览器打开可看实时流程图）\n"
-              << "  会话: " << runDir << "\n"
-              << "  按 Ctrl+C 结束并生成分析产物\n";
+              << "  会话: " << sessions.runDir() << "\n";
+    if (cfg.value.storage.idleFinalizeMinutes > 0)
+        std::cout << "  空闲 " << cfg.value.storage.idleFinalizeMinutes
+                  << " 分钟自动收尾并开新会话（storage.idle_finalize_minutes，<=0 关闭）\n";
+    std::cout << "  按 Ctrl+C 结束并生成分析产物\n";
 
 #ifdef _WIN32
     SetConsoleCtrlHandler(onCtrlSignal, TRUE);
 #endif
 
     while (!g_stop.load() && source.running()) {
+        sessions.rotateIfIdle(cfg.value.storage.idleFinalizeMinutes);
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 
     std::cout << "\n正在收尾...\n";
     source.stop();
-    rec.flush();
-    const RunSummary s = finalizeRun(runDir, cfg.value, rec.dropped(), source.rewrittenRequests(),
-                                     source.usageInjectionDisabled());
-    std::cout << "✓ 采集完成\n  run: " << sessionId << "\n";
-    printSummary(s);
-    if (s.status != "empty") std::cout << "  流程图: " << (std::filesystem::path(runDir) / "graph.mmd").string() << "\n";
+    sessions.finish();
     return 0;
 }
 

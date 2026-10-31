@@ -52,6 +52,8 @@ struct Config {
     struct StorageCfg {
         std::string root; // 空表示默认 %USERPROFILE%\.xray
         int retentionDays = 30;
+        // P2-15：serve 空闲该分钟数后自动收尾当前会话（<=0 关闭）
+        int idleFinalizeMinutes = 10;
     } storage;
 
     ChainOptions chainOptions() const;

@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <string>
 
@@ -31,6 +32,30 @@ std::string resolveEventsPath(const std::string& input) {
     return input;
 }
 
+bool parseEventLine(const std::string& line, RawEvent& e) {
+    if (line.empty() || line == "\r") return false;
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::parse(line);
+    } catch (...) {
+        return false;
+    }
+    e = RawEvent{};
+    e.seq = j.value("seq", 0);
+    e.ts = j.value("ts", "");
+    e.kind = j.value("kind", "");
+    e.hop = j.value("hop", "");
+    e.upstream = j.value("upstream", "");
+    e.reqBody = j.value("req_body", "");
+    e.respBody = j.value("resp_body", "");
+    e.data = j.value("data", "");
+    e.status = j.value("status", 0);
+    e.latencyMs = j.value("latency_ms", 0);
+    e.err = j.value("error", "");
+    e.truncated = j.value("truncated", false);
+    return true;
+}
+
 Result<std::vector<RawEvent>> readEventsFile(const std::string& path) {
     std::ifstream in(path, std::ios::binary);
     if (!in) return Result<std::vector<RawEvent>>::Fail("无法打开 events 文件: " + path);
@@ -40,30 +65,61 @@ Result<std::vector<RawEvent>> readEventsFile(const std::string& path) {
     int bad = 0;
     while (std::getline(in, line)) {
         if (line.empty() || line == "\r") continue;
-        nlohmann::json j;
-        try {
-            j = nlohmann::json::parse(line);
-        } catch (...) {
+        RawEvent e;
+        if (!parseEventLine(line, e)) {
             ++bad;
             continue;
         }
-        RawEvent e;
-        e.seq = j.value("seq", 0);
-        e.ts = j.value("ts", "");
-        e.kind = j.value("kind", "");
-        e.hop = j.value("hop", "");
-        e.upstream = j.value("upstream", "");
-        e.reqBody = j.value("req_body", "");
-        e.respBody = j.value("resp_body", "");
-        e.data = j.value("data", "");
-        e.status = j.value("status", 0);
-        e.latencyMs = j.value("latency_ms", 0);
-        e.err = j.value("error", "");
-        e.truncated = j.value("truncated", false);
         events.push_back(std::move(e));
     }
     if (bad > 0) logWarn("events", "跳过 " + std::to_string(bad) + " 行无法解析的记录");
     return Result<std::vector<RawEvent>>::Ok(std::move(events));
+}
+
+Result<bool> EventsTail::poll(const std::string& path) {
+    std::error_code ec;
+    const std::size_t size = std::filesystem::file_size(path, ec);
+    if (ec) return Result<bool>::Fail("无法打开 events 文件: " + path + "（" + ec.message() + "）");
+    const std::filesystem::file_time_type mt = std::filesystem::last_write_time(path, ec);
+    const long long mtTick = ec ? -1 : static_cast<long long>(mt.time_since_epoch().count());
+
+    // 文件大小与 mtime 都没变：直接复用缓存
+    if (size == offset && mtTick == mtimeTick && pending.empty()) return Result<bool>::Ok(false);
+    // 文件被截断 / 重建（例如外部清理）：从头重读
+    if (size < offset) {
+        events.clear();
+        offset = 0;
+        pending.clear();
+    }
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return Result<bool>::Fail("无法打开 events 文件: " + path);
+    in.seekg(static_cast<std::streamoff>(offset));
+    std::string buf((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    offset += buf.size();
+    mtimeTick = mtTick;
+    pending += buf;
+
+    bool added = false;
+    int bad = 0;
+    std::size_t start = 0;
+    for (;;) {
+        const std::size_t nl = pending.find('\n', start);
+        if (nl == std::string::npos) break;
+        std::string line = pending.substr(start, nl - start);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        RawEvent e;
+        if (parseEventLine(line, e)) {
+            events.push_back(std::move(e));
+            added = true;
+        } else if (!line.empty() && line != "\r") {
+            ++bad;
+        }
+        start = nl + 1;
+    }
+    pending.erase(0, start); // 未写完的尾行留到下次
+    if (bad > 0) logWarn("events", "跳过 " + std::to_string(bad) + " 行无法解析的记录");
+    return Result<bool>::Ok(added);
 }
 
 bool isSupportedEndpoint(const std::string& upstream) {
@@ -200,18 +256,22 @@ Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events,
     return Result<std::vector<CallPair>>::Ok(std::move(out));
 }
 
-Result<ChainResult> buildChainFromEvents(const std::string& input, const ChainOptions& opts) {
-    const std::string path = resolveEventsPath(input);
-    auto events = readEventsFile(path);
-    if (!events.ok()) return Result<ChainResult>::Fail(events.err);
+Result<ChainResult> buildChainFromRawEvents(const std::vector<RawEvent>& events, const ChainOptions& opts) {
     AssembleStats stats;
-    auto pairs = assembleCalls(events.value, &stats);
+    auto pairs = assembleCalls(events, &stats);
     if (!pairs.ok()) return Result<ChainResult>::Fail(pairs.err);
     ChainResult cr = buildRuns(std::move(pairs.value), opts);
     cr.unsupportedRequests = stats.unsupportedRequests;
     cr.parseFailed = stats.parseFailed;
     cr.truncatedEvents = stats.truncatedEvents;
     return Result<ChainResult>::Ok(std::move(cr));
+}
+
+Result<ChainResult> buildChainFromEvents(const std::string& input, const ChainOptions& opts) {
+    const std::string path = resolveEventsPath(input);
+    auto events = readEventsFile(path);
+    if (!events.ok()) return Result<ChainResult>::Fail(events.err);
+    return buildChainFromRawEvents(events.value, opts);
 }
 
 } // namespace axr

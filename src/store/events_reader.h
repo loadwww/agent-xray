@@ -35,6 +35,21 @@ std::string resolveEventsPath(const std::string& input);
 
 Result<std::vector<RawEvent>> readEventsFile(const std::string& path);
 
+// P2-15：解析单行 events.jsonl；空行 / 坏行返回 false
+bool parseEventLine(const std::string& line, RawEvent& out);
+
+// P2-15：增量读取器。按文件大小 + mtime 判断是否有新增，只读新增字节；
+// 未写完的尾行留在 pending，下次拼接后再解析。
+struct EventsTail {
+    std::vector<RawEvent> events;
+    std::size_t offset = 0;      // 已读取的字节数
+    long long mtimeTick = -1;    // last_write_time().time_since_epoch().count()
+    std::string pending;         // 尚未以换行结尾的尾巴
+
+    // 返回 true 表示读到了新事件；文件打不开时 Fail
+    Result<bool> poll(const std::string& path);
+};
+
 // upstream 是否指向可还原的端点（路径以 /chat/completions 结尾；
 // 兼容 http://127.0.0.1:11434/v1/chat/completions 这类本地上游）
 bool isSupportedEndpoint(const std::string& upstream);
@@ -45,5 +60,9 @@ Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events,
 
 // 一步到位：events 路径（目录或文件）→ 切 run / 建链
 Result<ChainResult> buildChainFromEvents(const std::string& input, const ChainOptions& opts = ChainOptions{});
+
+// P2-15：已解析的事件 → 切 run / 建链（供增量缓存复用，避免重复读盘）
+Result<ChainResult> buildChainFromRawEvents(const std::vector<RawEvent>& events,
+                                            const ChainOptions& opts = ChainOptions{});
 
 } // namespace axr

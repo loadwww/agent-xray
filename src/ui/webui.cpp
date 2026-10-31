@@ -1,9 +1,13 @@
 #include "ui/webui.h"
 
 #include <algorithm>
+#include <deque>
 #include <filesystem>
 #include <fstream>
+#include <memory>
+#include <mutex>
 #include <sstream>
+#include <unordered_map>
 
 #include "chain/run.h"
 #include "common/time_util.h"
@@ -48,6 +52,49 @@ bool validRunId(const std::string& id) {
         if (!ok) return false;
     }
     return true;
+}
+
+// P2-15：实时建链缓存。前端每 3 秒轮询 /api/runs 与 /api/run，每次都全量重读
+// events.jsonl 在长任务下会越来越慢。这里按 runDir 保存增量读取器与上次链结果：
+// 文件 (size, mtime) 未变直接复用，有新增只读新字节再重建链。
+struct LiveEntry {
+    EventsTail tail;
+    std::shared_ptr<ChainResult> chain;
+};
+
+std::mutex g_liveMutex;
+std::unordered_map<std::string, std::shared_ptr<LiveEntry>> g_liveCache;
+std::deque<std::string> g_liveOrder;
+
+std::shared_ptr<ChainResult> liveChain(const std::string& runDir, const ChainOptions& opts) {
+    std::lock_guard<std::mutex> lk(g_liveMutex);
+    std::shared_ptr<LiveEntry> entry;
+    auto it = g_liveCache.find(runDir);
+    if (it != g_liveCache.end()) {
+        entry = it->second;
+    } else {
+        entry = std::make_shared<LiveEntry>();
+        g_liveCache[runDir] = entry;
+        g_liveOrder.push_back(runDir);
+        // 上限 64 条，超出按插入顺序淘汰最早的会话
+        while (g_liveOrder.size() > 64) {
+            const std::string old = g_liveOrder.front();
+            g_liveOrder.pop_front();
+            if (old != runDir) g_liveCache.erase(old);
+        }
+    }
+
+    const std::string path = (std::filesystem::path(runDir) / "events.jsonl").string();
+    const auto poll = entry->tail.poll(path);
+    if (!poll.ok()) {
+        if (entry->tail.events.empty()) return nullptr; // 首次就读不到（目录刚建/已清理）
+        return entry->chain;                            // 读失败时退回上次结果
+    }
+    if (poll.value || !entry->chain) {
+        auto built = buildChainFromRawEvents(entry->tail.events, opts);
+        if (built.ok()) entry->chain = std::make_shared<ChainResult>(std::move(built.value));
+    }
+    return entry->chain;
 }
 
 nlohmann::json stepToJson(const Step& s) {
@@ -162,9 +209,9 @@ nlohmann::json runBriefUiJson(const Run& r) {
 // 未收尾的 run 还没有 meta.json，列表里现算一份摘要（否则侧栏只会显示 0 步 / unknown）
 nlohmann::json liveSummary(const std::string& runDir, const Config& cfg) {
     nlohmann::json j;
-    auto chain = buildChainFromEvents(runDir, cfg.chainOptions());
-    if (!chain.ok()) return j;
-    const Run* p = primaryRun(chain.value);
+    auto chain = liveChain(runDir, cfg.chainOptions());
+    if (!chain) return j;
+    const Run* p = primaryRun(*chain);
     if (p == nullptr) return j;
 
     Run copy = *p;
@@ -187,9 +234,9 @@ nlohmann::json liveSummary(const std::string& runDir, const Config& cfg) {
     j["models"] = models;
     // 实时模式：多 run 直接平铺（不落盘 run-<i>.json）
     j["primary"] = p->id;
-    j["runCount"] = static_cast<int>(chain.value.runs.size());
+    j["runCount"] = static_cast<int>(chain->runs.size());
     nlohmann::json runs = nlohmann::json::array();
-    for (const auto& r : chain.value.runs) runs.push_back(runBriefUiJson(r));
+    for (const auto& r : chain->runs) runs.push_back(runBriefUiJson(r));
     j["runs"] = std::move(runs);
     return j;
 }
@@ -693,18 +740,17 @@ WebResponse webUiRun(const Config& cfg, const std::string& id, const std::string
         }
     }
 
-    // 采集中：直接从 events.jsonl 实时还原
-    auto chain = buildChainFromEvents(runDir, cfg.chainOptions());
-    if (!chain.ok()) return fail(500, "建链失败: " + chain.err);
-    const Run* sel = runId.empty() ? primaryRun(chain.value) : findRunById(chain.value, runId);
+    // 采集中：直接从 events.jsonl 实时还原（P2-15：按文件增量缓存）
+    auto chain = liveChain(runDir, cfg.chainOptions());
+    if (!chain) return fail(500, "建链失败: 无法读取 events.jsonl");
+    const Run* sel = runId.empty() ? primaryRun(*chain) : findRunById(*chain, runId);
     if (sel == nullptr) {
         if (!runId.empty()) return fail(404, "找不到 run: " + runId);
         return fail(200, "尚未捕获到完整的 LLM 调用");
     }
     Run copy = *sel;
     nlohmann::json j = runToJson(copy, cfg, true);
-    addDegradedCounts(j, chain.value.unsupportedRequests, chain.value.parseFailed,
-                      chain.value.truncatedEvents);
+    addDegradedCounts(j, chain->unsupportedRequests, chain->parseFailed, chain->truncatedEvents);
     r.body = j.dump();
     return r;
 }

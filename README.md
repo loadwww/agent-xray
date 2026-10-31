@@ -48,6 +48,9 @@ axr show <runID>                                    # 终端看步骤 / token / 
 Start-Process axr -ArgumentList 'serve','--listen','8080' -WorkingDirectory D:\agent-xray
 ```
 
+长时间挂机时，当前会话空闲超过 `storage.idle_finalize_minutes`（默认 10 分钟）会自动收尾成
+run 产物并开一个新会话，避免单个 `events.jsonl` 无限增长。
+
 `config.yaml` 默认从**当前目录**读取；不在仓库目录时用 `--config D:\agent-xray\config.yaml`
 （否则会静默使用内置默认上游，你的 `model_map` 等配置不生效）。
 
@@ -70,7 +73,8 @@ cmake --build build -j
   `Error` / `403` / `Forbidden` / `Failed to` / `too much output` 等特征 → 琥珀色「疑似失败」
   （词表可用 `proxy.tool_error_patterns` 覆盖）。受挫的 Step 按同色标注，顶部横幅给出失败总数与
   最早出现的 Step，侧栏该 run 带「N 失败」徽标。
-- **跑的时候就能看**：采集中的 run 每 3 秒刷新，直接读 `events.jsonl` 现建链，长任务不用等结束。
+- **跑的时候就能看**：采集中的 run 每 3 秒刷新，直接读 `events.jsonl` 现建链（只续读新增事件，
+  文件未变直接复用缓存），长任务不用等结束。
 - **两种视角**：默认看完整图（工具分支全展开）；一键折叠只看主模型思考链路；顶部甘特图给出总耗时、
   每步 LLM 时间片、同名工具合并后的并行条与步骤间隙，并行 / 串行 / 卡点一目了然。
 - **证据链完整**：每次 run 留下 `events.jsonl`、`run.json`、`graph.mmd`、`meta.json`、`report.md`，

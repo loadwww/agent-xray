@@ -47,3 +47,4 @@ redact:
 storage:
   root: "~/.xray"
   retention_days: 30
+  idle_finalize_minutes: 10  # serve 空闲 10 分钟后自动收尾当前会话（<=0 关闭）
