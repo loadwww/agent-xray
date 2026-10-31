@@ -1,0 +1,66 @@
+name: Bug report
+description: Something broke — a run didn't parse, the proxy returned the wrong thing, or the UI showed the incorrect step.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: `axr demo --diff` runs offline and exercises the UI/parsing path with no API key.
+        If it fails too, the bug is not specific to your agent — saying so saves a round trip.
+
+        Do not paste API keys or unredacted request bodies. AgentXray redacts on disk, but issues are public.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: axr version and platform
+      description: Output of `axr version`, plus OS and architecture.
+      placeholder: "AgentXray 0.4.1 · Ubuntu 24.04 x86_64"
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Exact commands. Prefer `axr run -- <cmd>` against a mock or a public endpoint over a full agent stack.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Config (redacted)
+      description: The config.yaml you used, with keys and upstream URLs removed if they are private.
+      render: yaml
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part?
+      multiple: true
+      options:
+        - Proxy / forwarding (headers, status codes, streaming)
+        - Reconstruction (steps, tool calls, usage)
+        - Web UI
+        - report.md / graph.mmd / diff
+        - Install / packaging / Docker
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I am not pasting secrets (API keys, unredacted bodies).
+          required: true
+        - label: I checked whether `axr demo --diff` fails the same way.
+          required: false

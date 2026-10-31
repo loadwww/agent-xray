@@ -165,7 +165,7 @@ If you need to see what an **uninstrumented** agent actually did — and diff tw
 
 ## Contributing
 
-Issues, reproductions and docs fixes are all welcome. If you're unsure whether something is in scope, open a Discussion first — this is a single-maintainer project and scope is the main constraint.
+Issues, reproductions and docs fixes are all welcome. If you're unsure whether something is in scope, open a Discussion first — this is a single-maintainer project and scope is the main constraint. Build and test steps are in [CONTRIBUTING.md](CONTRIBUTING.md); security reports go through [SECURITY.md](SECURITY.md), not a public issue.
 
 ## License
 

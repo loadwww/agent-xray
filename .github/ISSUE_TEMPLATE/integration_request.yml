@@ -1,0 +1,42 @@
+name: Integration / recipe request
+description: Ask for a specific agent, framework or client to be verified and documented under "Works with".
+title: "[integration] "
+labels: ["integration"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A recipe needs one thing: the tool lets you point its OpenAI base URL somewhere else. No SDK, no code change.
+        If it can't, it's out of scope — say so and the answer is quick.
+  - type: input
+    id: tool
+    attributes:
+      label: Agent / framework / client
+      placeholder: "Aider 0.60, Cline 3.x, LiteLLM, ..."
+    validations:
+      required: true
+  - type: textarea
+    id: how
+    attributes:
+      label: How does it let you override the endpoint?
+      description: Environment variable, config file, UI field, or not at all. Link its docs if you have one.
+      render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: tried
+    attributes:
+      label: Have you tried it with AgentXray?
+      options:
+        - Yes — it works, but there is no recipe yet
+        - Yes — partially, something is off
+        - No — requesting it
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / output
+      description: What showed up in the run directory or the UI. Redact keys.
+    validations:
+      required: false
