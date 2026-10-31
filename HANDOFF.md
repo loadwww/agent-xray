@@ -1,12 +1,12 @@
 # AgentXray 改进实施 — 交接说明
 
-> 本文供下一个对话接手。第一批（P0-1 → P0-2 → P0-3 → P1-5 的 1、2 两条）与第二批
-> （P1-4 → P1-5 的 3、4 两条 → P1-6）均已完成，所有改动已 push 到 `origin/master`
-> （`6528cdf..9c7e73e`），CI 双平台绿。
+> 本文供下一个对话接手。第一批（P0-1 → P0-2 → P0-3 → P1-5 的 1、2 两条）、第二批
+> （P1-4 → P1-5 的 3、4 两条 → P1-6）与第三批（P2-7 ~ P2-12）均已完成，所有改动已 push 到
+> `origin/master`，CI 双平台绿。
 
 ## 一、基线与环境
 
-- 仓库：`https://github.com/loadwww/agent-xray`，`master` 分支，HEAD = `9c7e73e`
+- 仓库：`https://github.com/loadwww/agent-xray`，`master` 分支，代码 HEAD = `52bddaa`
 - 语言：C++17；依赖只有 `third_party/nlohmann/json.hpp` 与 `third_party/cpp-httplib/httplib.h`（header-only）
 - 基线 selftest：174 项；当前 **250 passed / 0 failed**（Windows 与 WSL Linux 均实测）
 - 工作单原文：`agent-xray-improvement-plan.txt`（完整任务清单在下方第四节引用）
@@ -132,6 +132,16 @@ cmake --build build -j
 - selftest：序列化保留来源、旧 approx 回退、未知值回落、mermaid/report 的 `~` 门控
 - 验收：Windows / WSL Linux selftest 250 全过
 
+### P2-12 停止注入 OLLAMA_HOST — commit `52bddaa`
+- `src/proxy/runner.cpp`：删除 `OLLAMA_HOST` 注入。该变量是 ollama 原生 `/api/*` 客户端入口，
+  代理只还原 chat completions，注入 `base/ollama` 既不工作也误导用户
+- 本地 ollama 统一走 `/ollama/v1`：`/ollama` 上游 url 改为 `http://127.0.0.1:11434`（无 `/v1`），
+  `/ollama/v1/chat/completions` 剥离前缀后正好落到上游 `/v1/chat/completions`；`config.cpp` 默认配置、
+  `config.yaml`、README 同步
+- e2e（`tests/e2e_proxy.sh` / `.ps1`）：新增「子进程无 OLLAMA_HOST」与「`/ollama/v1` 前缀可采集」两条；
+  `tests/fake_agent.py` 用 `AXR_FAKE_PATH` 切换客户端 base 前缀
+- 验收：Windows / WSL Linux selftest 250 全过；Windows e2e 与 WSL `e2e_proxy.sh` 全过
+
 ## 三、关键代码事实（供下一个对话快速定位）
 
 - 转发层平台实现：`src/proxy/forward_winhttp.cpp`（`#ifdef _WIN32`）+ `src/proxy/forward_curl.cpp`（其它平台，libcurl）
@@ -143,15 +153,13 @@ cmake --build build -j
 
 ## 四、待做任务（按工作单顺序）
 
-> 工作单建议的批次顺序：第一批、第二批均已完成，从第三批继续。
+> 工作单建议的批次顺序：第一~三批均已完成，从第四批继续。
 
 ### 第二批（已完成，见第二节）
 
-### 第三批（P2-7 ~ P2-12 低成本准确性）
+### 第三批（P2-7 ~ P2-12 低成本准确性）— 已完成（见第二节）
 
-> P2-7、P2-8、P2-9、P2-10、P2-11 已完成（见第二节）。
-
-- **P2-12 修正 OLLAMA_HOST 注入**：删除注入，或 README 明确用 `/ollama/v1`；e2e 覆盖
+> P2-7、P2-8、P2-9、P2-10、P2-11、P2-12 均已完成；下一批从第四批开始。
 
 ### 第四批（P2-13 ~ P2-16 隐私/性能/运维）
 - **P2-13 采集模式与隐私**：`proxy.capture: full|summary`（summary 只存长度+sha256 前16位）；脱敏正则加 Bearer/api_key/x-api-key；run 目录 0700；非回环 bind 需 `--allow-remote`
@@ -171,9 +179,10 @@ cmake --build build -j
 - [x] 非 chat/completions 请求不污染 run，meta 有计数与 UI 提示
 - [x] Linux/macOS 能采集（axr serve + axr run），CI 双平台绿（P1-4）
 - [x] 存在 LICENSE，README 有支持矩阵与平台构建命令（顶部矩阵表 + Linux/macOS 构建一节均已就位）
-- [ ] 工具失败区分 confirmed/inferred；usage 缺失显示 "—"（P2-7 / P2-9）
-- [ ] inject_usage 默认开且自动降级；OLLAMA_HOST 修正（P2-8 / P2-12）
-- [ ] run id 防撞；截断事件不参与解析（P2-10 / P2-14）
+- [x] 工具失败区分 confirmed/inferred；usage 缺失显示 "—"（P2-7 / P2-9）
+- [x] inject_usage 默认开且自动降级；OLLAMA_HOST 修正（P2-8 / P2-12）
+- [x] run id 防撞（P2-10）
+- [ ] 截断事件不参与解析（P2-14）
 - [ ] summary 采集模式；retention 自动执行；UI 增量刷新（P2-13 / P2-15 / P2-16）
 - [x] 设计文档降级为历史文档，架构文档与实现一致（P1-6）
 
