@@ -14,7 +14,7 @@
 namespace axr {
 namespace {
 
-const char* kVersion = "0.4.1";
+const char* kVersion = "0.4.2";
 
 void printUsage() {
     std::cout << "AgentXray " << kVersion << "\n\n"
