@@ -42,7 +42,7 @@ int cmdReport(const std::vector<std::string>& args) {
     Status st = parseReportArgs(args, opts);
     if (!st.ok()) {
         std::cerr << st.err
-                  << "\n用法: axr report <run目录|events.jsonl|runID> [--run runId] [--out file] [--config config.yaml]\n";
+                  << "\n用法: axr report <run目录|events.jsonl|sessionID|runID> [--run runId] [--out file] [--config config.yaml]\n";
         return 2;
     }
 
@@ -51,16 +51,22 @@ int cmdReport(const std::vector<std::string>& args) {
         std::cerr << cfg.err << "\n";
         return 1;
     }
-    const std::string target = resolveRunInput(opts.target, cfg.value);
+    auto tgt = resolveRunTarget(opts.target, cfg.value);
+    if (!tgt.ok()) {
+        std::cerr << tgt.err << "\n";
+        return 1;
+    }
+    const std::string target = tgt.value.path;
+    const std::string selectId = opts.runId.empty() ? tgt.value.runId : opts.runId;
     auto chain = buildChainFromEvents(target, cfg.value.chainOptions());
     if (!chain.ok()) {
         std::cerr << chain.err << "\n";
         return 1;
     }
-    const Run* run = opts.runId.empty() ? primaryRun(chain.value) : findRunById(chain.value, opts.runId);
+    const Run* run = selectId.empty() ? primaryRun(chain.value) : findRunById(chain.value, selectId);
     if (!run) {
-        if (!opts.runId.empty()) {
-            std::cerr << "找不到 run: " << opts.runId << "（该 session 的 run:";
+        if (!selectId.empty()) {
+            std::cerr << "找不到 run: " << selectId << "（该 session 的 run:";
             for (const auto& x : chain.value.runs) std::cerr << " " << x.id;
             std::cerr << "）\n";
         } else {

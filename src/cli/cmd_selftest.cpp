@@ -1015,6 +1015,17 @@ int cmdSelftest(const std::vector<std::string>& args) {
         }
         t.check(briefOk, "P0-2 meta.runs 摘要字段齐全（id/steps）");
 
+        // WP2：目标可以是 sessionID，也可以直接是非主 run 的 runId
+        auto tgtOther = resolveRunTarget(otherId, cfg);
+        t.check(tgtOther.ok() && !tgtOther.value.runId.empty() &&
+                    fs::equivalent(tgtOther.value.path, sessionDir),
+                "WP2 runId 可定位到所属 session");
+        auto tgtSession = resolveRunTarget("20261030-150000-p02x", cfg);
+        t.check(tgtSession.ok() && tgtSession.value.runId.empty() &&
+                    fs::equivalent(tgtSession.value.path, sessionDir),
+                "WP2 sessionId 行为不变");
+        t.check(isRunIdLike(otherId) && !isRunIdLike("20261030-150000-p02x"), "WP2 runId 形态识别正确");
+
         // 非主 run 落盘 run-0.json，内容是完整 Run JSON
         const fs::path secondary = sessionDir / "run-0.json";
         t.check(fs::exists(secondary), "P0-2 非主 run 落盘 run-0.json");

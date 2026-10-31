@@ -46,7 +46,7 @@ int cmdExport(const std::vector<std::string>& args) {
     Status st = parseExportArgs(args, opts);
     if (!st.ok()) {
         std::cerr << st.err
-                  << "\n用法: axr export <run目录|events.jsonl|runID> --format mermaid|json [--run runId] [--out file]\n";
+                  << "\n用法: axr export <run目录|events.jsonl|sessionID|runID> --format mermaid|json [--run runId] [--out file]\n";
         return 2;
     }
 
@@ -55,16 +55,22 @@ int cmdExport(const std::vector<std::string>& args) {
         std::cerr << cfg.err << "\n";
         return 1;
     }
-    const std::string target = resolveRunInput(opts.target, cfg.value);
+    auto tgt = resolveRunTarget(opts.target, cfg.value);
+    if (!tgt.ok()) {
+        std::cerr << tgt.err << "\n";
+        return 1;
+    }
+    const std::string target = tgt.value.path;
+    const std::string selectId = opts.runId.empty() ? tgt.value.runId : opts.runId;
     auto chain = buildChainFromEvents(target, cfg.value.chainOptions());
     if (!chain.ok()) {
         std::cerr << chain.err << "\n";
         return 1;
     }
-    const Run* found = opts.runId.empty() ? primaryRun(chain.value) : findRunById(chain.value, opts.runId);
+    const Run* found = selectId.empty() ? primaryRun(chain.value) : findRunById(chain.value, selectId);
     if (!found) {
-        if (!opts.runId.empty()) {
-            std::cerr << "找不到 run: " << opts.runId << "（该 session 的 run:";
+        if (!selectId.empty()) {
+            std::cerr << "找不到 run: " << selectId << "（该 session 的 run:";
             for (const auto& x : chain.value.runs) std::cerr << " " << x.id;
             std::cerr << "）\n";
         } else {
