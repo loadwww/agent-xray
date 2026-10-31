@@ -20,6 +20,10 @@ struct ChainResult {
     std::vector<Link> links;
     int retryCount = 0;
     int fuzzyCount = 0;
+    // 解析降级计数（events 组帧阶段统计，写 meta 的 unsupported_requests / parse_degraded）
+    int unsupportedRequests = 0; // 非 /chat/completions 端点的请求：不还原，只留原始事件
+    int parseFailed = 0;         // 白名单端点但请求体解析失败
+    int truncatedEvents = 0;     // body 超过 max_body_bytes 被截断的事件
 };
 
 ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts = ChainOptions{});

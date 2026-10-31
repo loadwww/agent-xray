@@ -59,20 +59,40 @@ Result<std::vector<RawEvent>> readEventsFile(const std::string& path) {
         e.status = j.value("status", 0);
         e.latencyMs = j.value("latency_ms", 0);
         e.err = j.value("error", "");
+        e.truncated = j.value("truncated", false);
         events.push_back(std::move(e));
     }
     if (bad > 0) logWarn("events", "跳过 " + std::to_string(bad) + " 行无法解析的记录");
     return Result<std::vector<RawEvent>>::Ok(std::move(events));
 }
 
-Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events) {
+bool isSupportedEndpoint(const std::string& upstream) {
+    // 只还原 chat completions；路径以 /chat/completions 结尾即视为白名单，
+    // 本地上游（127.0.0.1:11434/v1/...）与带网关前缀的路径都能命中
+    static const std::string kSuffix = "/chat/completions";
+    std::string path = upstream;
+    const std::size_t q = path.find('?');
+    if (q != std::string::npos) path.resize(q);
+    return path.size() >= kSuffix.size() &&
+           path.compare(path.size() - kSuffix.size(), kSuffix.size(), kSuffix) == 0;
+}
+
+Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events,
+                                            AssembleStats* stats) {
     std::map<std::string, Pending> pendings;
     std::vector<std::string> order;
 
     for (const auto& e : events) {
+        if (e.truncated && stats) ++stats->truncatedEvents;
         if (e.hop.empty()) continue;
 
         if (e.kind == "req") {
+            // 非白名单端点（Responses API / embeddings / models …）：不组帧，
+            // 原始事件仍留在 events.jsonl，计数后显式隔离，避免污染链与统计
+            if (!isSupportedEndpoint(e.upstream)) {
+                if (stats) ++stats->unsupportedRequests;
+                continue;
+            }
             Pending p;
             p.pair.hop = e.hop;
             p.pair.call.id = e.hop;
@@ -84,6 +104,7 @@ Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events)
             try {
                 body = nlohmann::json::parse(e.reqBody);
             } catch (...) {
+                if (stats) ++stats->parseFailed;
                 p.pair.resp.err = "req_body 解析失败";
                 pendings[e.hop] = std::move(p);
                 order.push_back(e.hop);
@@ -91,6 +112,7 @@ Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events)
             }
             auto parsed = parseOpenAiRequest(body, e.upstream);
             if (!parsed.ok()) {
+                if (stats) ++stats->parseFailed;
                 p.pair.resp.err = parsed.err;
             } else {
                 p.pair.call.messages = parsed.value.messages;
@@ -167,9 +189,14 @@ Result<ChainResult> buildChainFromEvents(const std::string& input, const ChainOp
     const std::string path = resolveEventsPath(input);
     auto events = readEventsFile(path);
     if (!events.ok()) return Result<ChainResult>::Fail(events.err);
-    auto pairs = assembleCalls(events.value);
+    AssembleStats stats;
+    auto pairs = assembleCalls(events.value, &stats);
     if (!pairs.ok()) return Result<ChainResult>::Fail(pairs.err);
-    return Result<ChainResult>::Ok(buildRuns(std::move(pairs.value), opts));
+    ChainResult cr = buildRuns(std::move(pairs.value), opts);
+    cr.unsupportedRequests = stats.unsupportedRequests;
+    cr.parseFailed = stats.parseFailed;
+    cr.truncatedEvents = stats.truncatedEvents;
+    return Result<ChainResult>::Ok(std::move(cr));
 }
 
 } // namespace axr

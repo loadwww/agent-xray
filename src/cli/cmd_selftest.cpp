@@ -739,6 +739,86 @@ int cmdSelftest(const std::vector<std::string>& args) {
         fs::remove_all(tmp);
     }
 
+    // T15 混合端点：非 chat/completions 请求被显式隔离，不进入链与统计
+    testFixture(dir, "t15_mixed_endpoints", t, [&](const ChainResult& cr) {
+        t.check(cr.runs.size() == 1, "T15 runs 只由 chat/completions 组成（1 个 run）");
+        t.check(cr.unsupportedRequests == 2, "T15 responses/embeddings 计入 unsupported_requests");
+        t.check(cr.truncatedEvents == 1, "T15 truncated 事件单独计数");
+        t.check(cr.parseFailed == 0, "T15 无解析失败");
+        if (cr.runs.empty()) return;
+        const Run& r = cr.runs[0];
+        t.check(r.steps.size() == 2, "T15 2 Step（本机 11434 上游也算 chat/completions）");
+        bool allChat = true;
+        for (const auto& s : r.steps) {
+            if (!isSupportedEndpoint(s.call.endpoint)) allChat = false;
+        }
+        t.check(allChat, "T15 链上步骤全部是 chat/completions 端点");
+    });
+
+    // P0-3 白名单边界、解析失败计数、meta 落盘与 Web UI 提示字段
+    {
+        // 白名单：以 /chat/completions 结尾才还原，兼容本地上游
+        t.check(isSupportedEndpoint("https://api.deepseek.com/v1/chat/completions"),
+                "P0-3 标准端点命中白名单");
+        t.check(isSupportedEndpoint("http://127.0.0.1:11434/v1/chat/completions"),
+                "P0-3 本地上游命中白名单");
+        t.check(!isSupportedEndpoint("https://api.openai.com/v1/responses"),
+                "P0-3 Responses API 被隔离");
+        t.check(!isSupportedEndpoint("https://api.anthropic.com/v1/messages"),
+                "P0-3 Anthropic /v1/messages 被隔离");
+
+        // 白名单端点但 req_body 是坏 JSON：parse_failed 单独计数，pair 仍保留（链可诊断）
+        std::vector<RawEvent> evs;
+        RawEvent bad;
+        bad.seq = 1;
+        bad.kind = "req";
+        bad.hop = "h-1";
+        bad.upstream = "https://api.deepseek.com/v1/chat/completions";
+        bad.reqBody = "{not json";
+        evs.push_back(bad);
+        AssembleStats st;
+        auto pairs = assembleCalls(evs, &st);
+        t.check(pairs.ok() && pairs.value.size() == 1, "P0-3 解析失败的请求仍留在链上");
+        t.check(st.parseFailed == 1 && st.unsupportedRequests == 0, "P0-3 解析失败单独计数");
+
+        // 现有 fixture 不得被误过滤 / 误计数
+        auto chain14 = buildChainFromEvents(dir + "/t14_two_tasks_same_system");
+        t.check(chain14.ok() && chain14.value.unsupportedRequests == 0 &&
+                    chain14.value.parseFailed == 0 && chain14.value.truncatedEvents == 0,
+                "P0-3 现有 fixture 不被误过滤");
+
+        // finalize → meta 写 unsupported_requests / parse_degraded；UI 明细带提示字段
+        namespace fs = std::filesystem;
+        const fs::path tmp = fs::temp_directory_path() / ("axr-p03-" + makeSessionId());
+        const fs::path sessionDir = tmp / "runs" / "20261030-150000-p03x";
+        fs::create_directories(sessionDir);
+        fs::copy_file(dir + "/t15_mixed_endpoints/events.jsonl", sessionDir / "events.jsonl");
+
+        Config cfg = defaultConfig();
+        cfg.storage.root = tmp.string();
+
+        const RunSummary s = finalizeRun(sessionDir.string(), cfg, 0);
+        t.check(s.status == "complete" && s.stepCount == 2,
+                "P0-3 finalize 只还原 chat/completions 的 2 步");
+
+        nlohmann::json meta;
+        {
+            std::ifstream in((sessionDir / "meta.json").string());
+            in >> meta;
+        }
+        t.check(meta.value("unsupported_requests", 0) == 2, "P0-3 meta.unsupported_requests == 2");
+        t.check(meta.value("truncated_events", 0) == 1, "P0-3 meta.truncated_events == 1");
+        t.check(meta.value("parse_degraded", false), "P0-3 meta.parse_degraded 置真");
+
+        auto d3 = webUiRun(cfg, "20261030-150000-p03x", "");
+        t.check(d3.status == 200, "P0-3 UI 明细 200");
+        auto j3 = nlohmann::json::parse(d3.body, nullptr, false);
+        t.check(j3.value("unsupportedRequests", 0) == 2 && j3.value("truncatedEvents", 0) == 1,
+                "P0-3 UI 明细带降级计数字段");
+
+        fs::remove_all(tmp);
+    }
+
     // 30 条请求的长链
     testFixture(dir, "deepseek_tool_2", t, [&](const ChainResult& cr) {
         t.check(cr.runs.size() == 1, "长链 1 run");

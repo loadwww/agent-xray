@@ -23,6 +23,10 @@ struct RunSummary {
     std::string status; // complete | incomplete | empty
     long long droppedEvents = 0;
     int rewrittenRequests = 0; // 请求体被改写过的次数（model_map / inject_usage，meta 记 rewritten）
+    // 解析降级计数（>0 时 meta 写 parse_degraded:true 并分别计数）
+    int unsupportedRequests = 0; // 非 /chat/completions 端点的请求：不还原，原始流量留在 events.jsonl
+    int parseFailed = 0;         // 白名单端点但请求体解析失败
+    int truncatedEvents = 0;     // body 超过 max_body_bytes 被截断的事件
 };
 
 RunSummary finalizeRun(const std::string& runDir, const Config& cfg, long long droppedEvents,

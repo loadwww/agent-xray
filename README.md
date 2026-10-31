@@ -133,7 +133,11 @@ proxy:
 
 ## 边界（如实说明）
 
-- 只支持 OpenAI 兼容协议（`/v1/chat/completions` 与其流式 SSE），其它协议不还原。
+- 只还原 OpenAI 兼容协议的 chat completions（路径以 `/chat/completions` 结尾，含流式 SSE，
+  本地上游如 `http://127.0.0.1:11434/v1/chat/completions` 同样命中）。其它端点
+  （Responses API、Anthropic `/v1/messages`、embeddings、models 列表等）**不还原、也不进统计**，
+  但原始流量不丢：仍完整保存在 `events.jsonl`，并在 `meta.json` 计入 `unsupported_requests`
+  （同时置 `parse_degraded: true`），Web UI 顶部会提示未还原的条数。
 - 工具失败是**文本启发式**判断（协议层没有 `is_error`），个别措辞可能漏标；详情页能看到原始结果自行确认。
 - 用 `Observation:` 文本回填工具结果的框架（如 smolagents），能还原工具调用与扇出，但**结果内容**落在
   下一条消息正文里，工具表的结果会显示 `-`。

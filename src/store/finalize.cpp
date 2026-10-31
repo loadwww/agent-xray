@@ -70,6 +70,12 @@ void writeMeta(const std::string& runDir, const RunSummary& s, const Run* run,
     m["report"] = s.reportPath;
     if (s.droppedEvents > 0) m["dropped_events"] = s.droppedEvents;
     if (s.rewrittenRequests > 0) m["rewritten"] = true;
+    // 解析降级：非白名单端点 / 解析失败 / 截断分别计数，任一 >0 标 parse_degraded
+    if (s.unsupportedRequests > 0) m["unsupported_requests"] = s.unsupportedRequests;
+    if (s.parseFailed > 0) m["parse_failed"] = s.parseFailed;
+    if (s.truncatedEvents > 0) m["truncated_events"] = s.truncatedEvents;
+    if (s.unsupportedRequests > 0 || s.parseFailed > 0 || s.truncatedEvents > 0)
+        m["parse_degraded"] = true;
     writeTextFile(joinPath(runDir, "meta.json"), m.dump(2));
 }
 
@@ -122,6 +128,9 @@ RunSummary finalizeRun(const std::string& runDir, const Config& cfg, long long d
     s.missing = primary->missing;
     s.status = primary->incomplete ? "incomplete" : "complete";
     s.primaryModel = primary->steps.empty() ? "" : primary->steps.front().call.model;
+    s.unsupportedRequests = chain.value.unsupportedRequests;
+    s.parseFailed = chain.value.parseFailed;
+    s.truncatedEvents = chain.value.truncatedEvents;
 
     long long durationMs = 0;
     const auto t0 = parseRfc3339(primary->startedAt);

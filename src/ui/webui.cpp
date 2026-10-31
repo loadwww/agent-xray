@@ -229,6 +229,13 @@ std::string resolveRunFile(const std::string& runDir, const std::string& runId) 
     return "";
 }
 
+// 解析降级计数（非 chat/completions 隔离 / 解析失败 / 截断）：>0 才写入，前端据此出顶部提示
+void addDegradedCounts(nlohmann::json& j, int unsupported, int parseFailed, int truncated) {
+    if (unsupported > 0) j["unsupportedRequests"] = unsupported;
+    if (parseFailed > 0) j["parseFailed"] = parseFailed;
+    if (truncated > 0) j["truncatedEvents"] = truncated;
+}
+
 } // namespace
 
 WebResponse webUiPage() {
@@ -548,6 +555,16 @@ function stepDetails(d) {
   lastData = d;
   let html = `<div class="muted" style="font-family:Consolas,monospace">${esc(d.id)} <span class="tag ${d.live ? 'live' : ''}">${d.live ? '采集中（每 3 秒刷新）' : '已落盘'}</span></div>`;
   html += chips(d);
+  if (d.unsupportedRequests) {
+    html += '<div class="banner">有 ' + d.unsupportedRequests +
+      ' 条非 chat/completions 请求未还原，原始流量已保存在 events.jsonl</div>';
+  }
+  if (d.parseFailed || d.truncatedEvents) {
+    const parts = [];
+    if (d.parseFailed) parts.push(d.parseFailed + ' 条请求体解析失败');
+    if (d.truncatedEvents) parts.push(d.truncatedEvents + ' 条事件被截断');
+    html += '<div class="banner">' + parts.join('，') + '，相关步骤可能不完整</div>';
+  }
   if (d.incomplete || d.missing.length) {
     html += '<div class="banner">完整性校验未通过：' + (d.missing.map(m => esc(m)).join('；') || '最后一步没有后续请求') + '</div>';
   }
@@ -657,7 +674,16 @@ WebResponse webUiRun(const Config& cfg, const std::string& id, const std::string
         Run run;
         try {
             run = nlohmann::json::parse(raw).get<Run>();
-            r.body = runToJson(run, cfg, false).dump();
+            nlohmann::json j = runToJson(run, cfg, false);
+            // 已落盘：降级计数在 meta.json 里（run.json 不含）
+            const std::string rawMeta = readAll((std::filesystem::path(runDir) / "meta.json").string());
+            const nlohmann::json meta = nlohmann::json::parse(rawMeta, nullptr, false);
+            if (!meta.is_discarded()) {
+                addDegradedCounts(j, meta.value("unsupported_requests", 0),
+                                  meta.value("parse_failed", 0),
+                                  meta.value("truncated_events", 0));
+            }
+            r.body = j.dump();
             return r;
         } catch (...) {
             // run.json 损坏时退回实时建链
@@ -673,7 +699,10 @@ WebResponse webUiRun(const Config& cfg, const std::string& id, const std::string
         return fail(200, "尚未捕获到完整的 LLM 调用");
     }
     Run copy = *sel;
-    r.body = runToJson(copy, cfg, true).dump();
+    nlohmann::json j = runToJson(copy, cfg, true);
+    addDegradedCounts(j, chain.value.unsupportedRequests, chain.value.parseFailed,
+                      chain.value.truncatedEvents);
+    r.body = j.dump();
     return r;
 }
 
