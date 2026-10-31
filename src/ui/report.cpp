@@ -59,6 +59,7 @@ long long durationMs(const Run& run) {
 std::string buildReport(const Run& run, const MermaidOptions& mo) {
     std::string out;
     const int tokens = run.total.promptTokens + run.total.completionTokens;
+    const std::string tokensText = run.total.observed ? std::to_string(tokens) : "—";
     const int toolN = toolCount(run);
 
     out += "# Run: " + run.id + "\n\n";
@@ -72,7 +73,7 @@ std::string buildReport(const Run& run, const MermaidOptions& mo) {
 
     out += "- 模型：" + modelsOf(run) + "\n";
     out += "- 步数：" + std::to_string(run.steps.size()) + "　工具调用：" + std::to_string(toolN) +
-           "　总 token：" + std::to_string(tokens) + "\n";
+           "　总 token：" + tokensText + "\n";
     out += "- 状态：" + std::string(run.incomplete ? "incomplete" : "complete") +
            "　耗时：" + fmtSec(durationMs(run)) + "\n";
     out += "- 原始请求：" + std::to_string(run.requestCount) + "　重试：" + std::to_string(run.retryCount) +
@@ -111,13 +112,16 @@ std::string buildReport(const Run& run, const MermaidOptions& mo) {
                      : "| Step | Prompt | Completion | 合计 |\n|---|---|---|---|\n";
     for (std::size_t i = 0; i < run.steps.size(); ++i) {
         const Step& s = run.steps[i];
-        const int sum = s.response.usage.promptTokens + s.response.usage.completionTokens;
+        const bool observed = s.response.usage.observed;
+        const std::string sum = observed
+                                    ? std::to_string(s.response.usage.promptTokens + s.response.usage.completionTokens)
+                                    : "—";
         out += "| " + std::to_string(i + 1) + " |";
         if (showModel) out += " " + cell(s.call.model, 24) + " |";
-        out += " " + std::to_string(s.response.usage.promptTokens) + " | " +
-               std::to_string(s.response.usage.completionTokens) + " | " + std::to_string(sum) + " |\n";
+        out += " " + (observed ? std::to_string(s.response.usage.promptTokens) : "—") + " | " +
+               (observed ? std::to_string(s.response.usage.completionTokens) : "—") + " | " + sum + " |\n";
     }
-    out += "\nTotal: " + std::to_string(run.steps.size()) + " steps · " + std::to_string(tokens) + " tokens\n\n";
+    out += "\nTotal: " + std::to_string(run.steps.size()) + " steps · " + tokensText + " tokens\n\n";
 
     out += "## 备注\n\n";
     out += "- 工具耗时均为推断值（无 MCP 代理，标注 `~`）\n";

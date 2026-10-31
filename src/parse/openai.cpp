@@ -59,6 +59,7 @@ Content parseContentItem(const nlohmann::json& item) {
 
 void parseUsage(const nlohmann::json& j, Usage& u) {
     if (!j.is_object()) return;
+    u.observed = true;
     u.promptTokens = j.value("prompt_tokens", 0);
     u.completionTokens = j.value("completion_tokens", 0);
     if (j.contains("prompt_tokens_details") && j["prompt_tokens_details"].is_object()) {

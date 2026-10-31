@@ -27,7 +27,8 @@ std::string parseValue(const std::vector<std::string>& args, const std::string& 
 void printRunText(const Run& run) {
     std::cout << "Run: " << run.id << "\n";
     std::cout << "  状态: " << (run.incomplete ? "incomplete" : "complete")
-              << "  steps=" << run.steps.size() << "  tokens=" << (run.total.promptTokens + run.total.completionTokens)
+              << "  steps=" << run.steps.size() << "  tokens="
+              << (run.total.observed ? std::to_string(run.total.promptTokens + run.total.completionTokens) : "—")
               << "  " << run.startedAt << " → " << run.endedAt << "\n";
     for (const auto& m : run.missing) std::cout << "  ! " << m << "\n";
     std::cout << toMarkdownTimeline(run) << "\n";

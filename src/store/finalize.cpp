@@ -28,6 +28,7 @@ nlohmann::json runBriefJson(const Run& r) {
                           {"steps", static_cast<int>(r.steps.size())},
                           {"tools", tools},
                           {"tokens", r.total.promptTokens + r.total.completionTokens},
+                          {"usage_observed", r.total.observed},
                           {"incomplete", r.incomplete},
                           {"requests", r.requestCount},
                           {"retries", r.retryCount},
@@ -46,6 +47,7 @@ void writeMeta(const std::string& runDir, const RunSummary& s, const Run* run,
     m["request_count"] = s.requestCount;
     m["retry_count"] = s.retryCount;
     m["total_tokens"] = s.totalTokens;
+    m["usage_observed"] = s.usageObserved;
     if (run) m["fuzzy_edges"] = run->fuzzyEdges;
     if (run) {
         // 多 run：同一 session 里还可能有子 agent / 第二个任务，全部登记，不再静默丢弃
@@ -126,6 +128,7 @@ RunSummary finalizeRun(const std::string& runDir, const Config& cfg, long long d
     s.requestCount = primary->requestCount;
     s.retryCount = primary->retryCount;
     s.totalTokens = primary->total.promptTokens + primary->total.completionTokens;
+    s.usageObserved = primary->total.observed;
     s.incomplete = primary->incomplete;
     s.missing = primary->missing;
     s.status = primary->incomplete ? "incomplete" : "complete";

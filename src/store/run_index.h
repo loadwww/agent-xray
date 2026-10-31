@@ -14,6 +14,7 @@ struct RunBrief {
     int steps = 0;
     int tools = 0;
     int tokens = 0;
+    bool usageObserved = false;
     int requests = 0;
     int retries = 0;
     int fuzzyEdges = 0;
@@ -34,6 +35,7 @@ struct RunMeta {
     int requestCount = 0;
     int retryCount = 0;
     int totalTokens = 0;
+    bool usageObserved = false;
     std::vector<std::string> models;
     std::string reportPath;
     std::string primary;          // 主 run 的 runId（meta.json 的 primary，旧 meta 可能为空）

@@ -50,6 +50,7 @@ nlohmann::json toJsonArray(const std::vector<RunMeta>& metas) {
         j["request_count"] = m.requestCount;
         j["retry_count"] = m.retryCount;
         j["total_tokens"] = m.totalTokens;
+        j["usage_observed"] = m.usageObserved;
         j["models"] = m.models;
         j["has_meta"] = m.hasMeta;
         j["age_days"] = m.ageDays;
@@ -71,6 +72,7 @@ nlohmann::json toJsonArrayAll(const std::vector<RunMeta>& metas) {
             j["steps"] = m.stepCount;
             j["tools"] = m.toolCount;
             j["tokens"] = m.totalTokens;
+            j["usage_observed"] = m.usageObserved;
             j["incomplete"] = m.incomplete;
             j["requests"] = m.requestCount;
             j["retries"] = m.retryCount;
@@ -86,6 +88,7 @@ nlohmann::json toJsonArrayAll(const std::vector<RunMeta>& metas) {
             j["steps"] = b.steps;
             j["tools"] = b.tools;
             j["tokens"] = b.tokens;
+            j["usage_observed"] = b.usageObserved;
             j["incomplete"] = b.incomplete;
             j["requests"] = b.requests;
             j["retries"] = b.retries;
@@ -95,6 +98,10 @@ nlohmann::json toJsonArrayAll(const std::vector<RunMeta>& metas) {
         }
     }
     return arr;
+}
+
+std::string tokensText(int tokens, bool observed) {
+    return observed ? std::to_string(tokens) : "—"; // P2-9：未观测到 usage 不显示 0
 }
 
 } // namespace
@@ -133,14 +140,14 @@ int cmdList(const std::vector<std::string>& args) {
                 const std::string status = m.hasMeta ? m.status : "无 meta";
                 std::cout << "| " << cell(m.primary) << " | " << cell(m.dirName) << " | " << cell(m.startedAt)
                           << " | " << status << " | " << m.stepCount << " | " << m.toolCount << " | "
-                          << m.totalTokens << " |\n";
+                          << tokensText(m.totalTokens, m.usageObserved) << " |\n";
                 continue;
             }
             for (const auto& b : m.runs) {
                 const std::string mark = (b.id == m.primary) ? "*" : "";
                 std::cout << "| " << b.id << mark << " | " << m.dirName << " | " << cell(b.startedAt) << " | "
                           << (b.incomplete ? "incomplete" : "complete") << " | " << b.steps << " | " << b.tools
-                          << " | " << b.tokens << " |\n";
+                          << " | " << tokensText(b.tokens, b.usageObserved) << " |\n";
             }
         }
         return 0;
@@ -153,7 +160,8 @@ int cmdList(const std::vector<std::string>& args) {
     for (const auto& m : metas.value) {
         const std::string status = m.hasMeta ? m.status : "无 meta";
         std::cout << "| " << cell(m.dirName) << " | " << cell(m.startedAt) << " | " << status << " | "
-                  << m.stepCount << " | " << m.toolCount << " | " << m.totalTokens << " |\n";
+                  << m.stepCount << " | " << m.toolCount << " | " << tokensText(m.totalTokens, m.usageObserved)
+                  << " |\n";
     }
     return 0;
 }

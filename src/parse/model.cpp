@@ -93,12 +93,16 @@ void from_json(const nlohmann::json& j, Message& m) {
 void to_json(nlohmann::json& j, const Usage& u) {
     j = nlohmann::json{{"prompt_tokens", u.promptTokens},
                        {"completion_tokens", u.completionTokens},
-                       {"cached_tokens", u.cachedTokens}};
+                       {"cached_tokens", u.cachedTokens},
+                       {"observed", u.observed}};
 }
 void from_json(const nlohmann::json& j, Usage& u) {
     u.promptTokens = valueOr<int>(j, "prompt_tokens", 0);
     u.completionTokens = valueOr<int>(j, "completion_tokens", 0);
     u.cachedTokens = valueOr<int>(j, "cached_tokens", 0);
+    // 旧 run.json 没有 observed：有非零数值就视为观测到（0 值旧数据无法区分）
+    u.observed = valueOr<bool>(j, "observed", false);
+    if (!j.contains("observed")) u.observed = u.promptTokens + u.completionTokens + u.cachedTokens > 0;
 }
 
 // ---------- LLMCall ----------

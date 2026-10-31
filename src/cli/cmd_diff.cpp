@@ -42,7 +42,8 @@ std::string clip(const std::string& s, std::size_t maxBytes = 60) {
 
 void printRunLine(const char* tag, const Run& run) {
     std::cout << "  " << tag << ": " << run.id << " · " << run.steps.size() << " Step · "
-              << countTools(run) << " 工具 · " << (run.total.promptTokens + run.total.completionTokens)
+              << countTools(run) << " 工具 · "
+              << (run.total.observed ? std::to_string(run.total.promptTokens + run.total.completionTokens) : "—")
               << " token\n";
 }
 

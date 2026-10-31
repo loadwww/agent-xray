@@ -64,6 +64,7 @@ nlohmann::json stepToJson(const Step& s) {
     j["completionTokens"] = s.response.usage.completionTokens;
     j["cachedTokens"] = s.response.usage.cachedTokens;
     j["tokens"] = s.tokens;
+    j["tokensObserved"] = s.response.usage.observed; // false 时前端显示 "—"
     j["error"] = s.response.err;
     j["text"] = trimText(s.response.text, 1200);
     int toolDefs = static_cast<int>(s.call.tools.size());
@@ -123,6 +124,7 @@ nlohmann::json runToJson(Run& run, const Config& cfg, bool live) {
     j["total"] = {{"prompt", run.total.promptTokens},
                   {"completion", run.total.completionTokens},
                   {"cached", run.total.cachedTokens},
+                  {"observed", run.total.observed},
                   {"tokens", run.total.promptTokens + run.total.completionTokens}};
 
     nlohmann::json models = nlohmann::json::array();
@@ -150,6 +152,7 @@ nlohmann::json runBriefUiJson(const Run& r) {
                           {"steps", static_cast<int>(r.steps.size())},
                           {"tools", tools},
                           {"tokens", r.total.promptTokens + r.total.completionTokens},
+                          {"tokensObserved", r.total.observed},
                           {"incomplete", r.incomplete},
                           {"requests", r.requestCount},
                           {"retries", r.retryCount},
@@ -172,6 +175,7 @@ nlohmann::json liveSummary(const std::string& runDir, const Config& cfg) {
     j["tools"] = tools;
     j["failTools"] = countFailedTools(copy);
     j["tokens"] = copy.total.promptTokens + copy.total.completionTokens;
+    j["tokensObserved"] = copy.total.observed;
     j["requests"] = copy.requestCount;
     j["retries"] = copy.retryCount;
     j["incomplete"] = copy.incomplete;
@@ -326,7 +330,7 @@ function renderList() {
     let html = `
     <div class="run-item ${r.id === selected && !selectedRun ? 'active' : ''}" data-id="${esc(r.id)}">
       <div class="id">${esc(r.id)}${r.live ? ' <span class="tag live">' + esc(r.status) + '</span>' : ''}</div>
-      <div class="meta">${esc(r.startedAt || '')} · ${r.steps} 步 · ${r.tools} 工具 · ${r.tokens} tok</div>
+      <div class="meta">${esc(r.startedAt || '')} · ${r.steps} 步 · ${r.tools} 工具 · ${r.tokensObserved === false ? 'token —' : r.tokens + ' tok'}</div>
       <div class="meta">${esc(r.status)}${r.incomplete ? ' · 不完整' : ''}${r.failTools ? ' · <span class="bad">' + r.failTools + ' 失败</span>' : ''}</div>
     </div>`;
     if (r.runCount > 1 && r.runs) {
@@ -335,7 +339,7 @@ function renderList() {
         html += r.runs.map(sr => `
         <div class="run-item sub ${r.id === selected && selectedRun === sr.id ? 'active' : ''}" data-id="${esc(r.id)}" data-run="${esc(sr.id)}">
           <div class="id">${esc(sr.id)}${sr.id === r.primary ? ' <span class="tag">主</span>' : ''}</div>
-          <div class="meta">${sr.steps} 步 · ${sr.tools} 工具 · ${sr.tokens} tok${sr.incomplete ? ' · 不完整' : ''}</div>
+          <div class="meta">${sr.steps} 步 · ${sr.tools} 工具 · ${sr.tokensObserved === false ? 'token —' : sr.tokens + ' tok'}${sr.incomplete ? ' · 不完整' : ''}</div>
         </div>`).join('');
       }
     }
@@ -367,7 +371,7 @@ async function loadRun() {
   let d;
   try { d = await api('/__xray/api/run?id=' + encodeURIComponent(selected) + (selectedRun ? '&run=' + encodeURIComponent(selectedRun) : '')); } catch (e) { return; }
   if (d.error) { mainEl.innerHTML = '<div class="banner bad">' + esc(d.error) + '</div>'; return; }
-  const key = d.id + '|' + d.steps.length + '|' + d.endedAt + '|' + d.live + '|' + d.total.tokens + '|' + d.failTools;
+  const key = d.id + '|' + d.steps.length + '|' + d.endedAt + '|' + d.live + '|' + d.total.tokens + '|' + d.total.observed + '|' + d.failTools;
   if (key === lastKey) return;
   lastKey = key;
   renderRun(d);
@@ -379,7 +383,7 @@ function chips(d) {
     ['状态', d.incomplete ? '不完整' : '完整'],
     ['Step', d.steps.length],
     ['请求', d.requestCount + '（重试 ' + d.retryCount + '）'],
-    ['token', t + '（提示 ' + d.total.prompt + ' / 补全 ' + d.total.completion + '）'],
+    ['token', d.total.observed === false ? '—（未观测）' : t + '（提示 ' + d.total.prompt + ' / 补全 ' + d.total.completion + '）'],
     ['耗时', Math.round(d.durationMs / 1000) + 's'],
     ['模型', d.models.join(', ') || '-'],
     ['模糊边', d.fuzzyEdges],
@@ -424,7 +428,7 @@ function chips(d) {
     if (s.model && s.model !== mainModel) {
       g += `<text x="${STEPW - 10}" y="${row.y + 22}" text-anchor="end" fill="#d29922" font-size="11">${esc(s.model)}</text>`;
     }
-    g += `<text x="12" y="${row.y + 42}" fill="#8b98a9" font-size="11">${s.latencyMs}ms · ${s.tokens} tok${s.streamed ? ' · 流式' : ''}</text>`;
+    g += `<text x="12" y="${row.y + 42}" fill="#8b98a9" font-size="11">${s.latencyMs}ms · ${s.tokensObserved === false ? 'token —' : s.tokens + ' tok'}${s.streamed ? ' · 流式' : ''}</text>`;
     g += `<text x="12" y="${row.y + 60}" fill="#8b98a9" font-size="11">${esc((s.finishReason || '') + ' · 消息 ' + s.messages + ' · 工具定义 ' + s.toolDefs)}</text>`;
     if (collapsed && s.tools.length) {
       g += `<text x="${STEPW - 10}" y="${row.y + 42}" text-anchor="end" fill="${s.failConfirmed ? '#ff9d99' : (s.failInferred ? '#f0d795' : '#3fb950')}" font-size="11">${s.tools.length} 工具${s.failCount ? ' · ' + s.failCount + ' 失败' : ''}</text>`;
@@ -527,7 +531,7 @@ function stepsTable(d) {
       <td class="mono">${i + 1}</td>
       ${multi ? `<td class="mono">${esc(s.model || '-')}</td>` : ''}
       <td class="mono">${s.latencyMs}ms</td>
-      <td class="mono">${s.promptTokens} / ${s.completionTokens}${s.cachedTokens ? ' / 缓存 ' + s.cachedTokens : ''}</td>
+      <td class="mono">${s.tokensObserved === false ? '—' : s.promptTokens + ' / ' + s.completionTokens + (s.cachedTokens ? ' / 缓存 ' + s.cachedTokens : '')}</td>
       <td>${s.tools.map(t => `<span class="tag ${t.errorKind === 'confirmed' ? 'err' : (t.errorKind === 'inferred' ? 'warn' : '')}" title="${esc(t.errorKind === 'confirmed' ? '明确失败（协议标记或结果 JSON 报错）' : (t.errorKind === 'inferred' ? '按结果文本推断为失败' : ''))}">${esc(t.name)} · ${t.durationMs}ms${t.errorKind === 'confirmed' ? ' · 失败' : (t.errorKind === 'inferred' ? ' · 疑似失败' : '')}</span>`).join(' ') || '<span class="muted">-</span>'}</td>
       <td>${s.fuzzy ? '<span class="tag fuzzy">推测连接</span> ' : ''}${esc((s.text || '').replace(/\s+/g, ' ').slice(0, 90))}</td>
     </tr>`).join('');
@@ -613,6 +617,7 @@ WebResponse webUiRuns(const Config& cfg) {
         j["requests"] = m.requestCount;
         j["retries"] = m.retryCount;
         j["tokens"] = m.totalTokens;
+        j["tokensObserved"] = m.usageObserved;
         j["models"] = m.models;
         // 多 run：侧栏折叠组用；旧 meta（无 runs 字段）按单 run 处理
         j["primary"] = m.primary;
@@ -625,6 +630,7 @@ WebResponse webUiRuns(const Config& cfg) {
                                   {"steps", b.steps},
                                   {"tools", b.tools},
                                   {"tokens", b.tokens},
+                                  {"tokensObserved", b.usageObserved},
                                   {"incomplete", b.incomplete},
                                   {"requests", b.requests},
                                   {"retries", b.retries},

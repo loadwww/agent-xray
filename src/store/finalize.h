@@ -17,6 +17,7 @@ struct RunSummary {
     int requestCount = 0;
     int retryCount = 0;
     int totalTokens = 0;
+    bool usageObserved = false; // 主 run 是否真的拿到上游 usage（P2-9）
     bool incomplete = false;
     std::vector<std::string> missing;
     std::string primaryModel;

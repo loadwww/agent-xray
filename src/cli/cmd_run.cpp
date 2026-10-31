@@ -41,7 +41,8 @@ int cmdRun(const std::vector<std::string>& args) {
     if (s.status == "empty") {
         std::cout << "  （未捕获到 LLM 流量，检查 agent 是否使用 OPENAI_BASE_URL）\n";
     } else {
-        std::cout << "  " << s.stepCount << " steps · " << s.toolCount << " tools · " << s.totalTokens
+        std::cout << "  " << s.stepCount << " steps · " << s.toolCount << " tools · "
+                  << (s.usageObserved ? std::to_string(s.totalTokens) : std::string("—"))
                   << " tokens" << (s.incomplete ? " · ⚠ incomplete" : "") << "\n";
         for (const auto& m : s.missing) std::cout << "  ! " << m << "\n";
         std::cout << "  输出: " << s.runDir << "\n";

@@ -19,6 +19,7 @@
 #include "config/config.h"
 #include "diff/rundiff.h"
 #include "graph/mermaid.h"
+#include "parse/openai.h"
 #include "proxy/event.h"
 #include "proxy/inject.h"
 #include "proxy/recorder.h"
@@ -76,7 +77,7 @@ void testModelRoundtrip(TestCtx& t) {
     run.endedAt = "2026-10-30T14:30:20.000+08:00";
     run.incomplete = true;
     run.missing = {"step 2: 消息数未增长"};
-    run.total = Usage{100, 50, 10};
+    run.total = Usage{100, 50, 10, true};
 
     LLMCall call;
     call.id = "h-1";
@@ -94,7 +95,7 @@ void testModelRoundtrip(TestCtx& t) {
     LLMResponse resp;
     resp.callId = "h-1";
     resp.text = "hi";
-    resp.usage = Usage{10, 5, 0};
+    resp.usage = Usage{10, 5, 0, true};
     resp.finishReason = "stop";
 
     ToolExec te;
@@ -121,6 +122,7 @@ void testModelRoundtrip(TestCtx& t) {
     t.check(back.steps[0].tools[0].name == "get_weather", "反序列化保留工具名");
     t.check(back.steps[0].tools[0].errorKind == "confirmed", "反序列化保留工具失败等级");
     t.check(back.total.promptTokens == 100, "反序列化保留 usage");
+    t.check(back.total.observed && back.steps[0].response.usage.observed, "反序列化保留 usage.observed");
     t.check(back.missing.size() == 1, "反序列化保留 missing");
 }
 
@@ -370,6 +372,23 @@ void testToolErrorClassify(TestCtx& t) {
     }
 }
 
+// P2-9：Usage.observed —— 区分"0 token"与"未观测"
+void testUsageObserved(TestCtx& t) {
+    auto parseBody = [](const char* body) { return parseOpenAiResponse(nlohmann::json::parse(body)); };
+    auto withUsage = parseBody(
+        R"({"id":"x","choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],)"
+        R"("usage":{"prompt_tokens":10,"completion_tokens":5}})");
+    t.check(withUsage.ok() && withUsage.value.usage.observed && withUsage.value.usage.promptTokens == 10,
+            "P2-9 带 usage 的响应标记 observed");
+    auto noUsage = parseBody(
+        R"({"id":"x","choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]})");
+    t.check(noUsage.ok() && !noUsage.value.usage.observed, "P2-9 无 usage 的响应不标记 observed");
+    auto zeroUsage = parseBody(
+        R"({"id":"x","choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],)"
+        R"("usage":{"prompt_tokens":0,"completion_tokens":0}})");
+    t.check(zeroUsage.ok() && zeroUsage.value.usage.observed, "P2-9 上游明确给 0 token 仍算观测到");
+}
+
 // 统计 Mermaid 里的节点定义行（S*/Sc* 矩形与 T* 菱形）
 int mermaidNodeCount(const std::string& mmd) {
     int n = 0;
@@ -550,6 +569,8 @@ void testWebUi(TestCtx& t, const std::string& fixturesDir) {
     t.check(d.contains("mermaid") && d["mermaid"].get<std::string>().find("flowchart") != std::string::npos,
             "UI run 明细含 mermaid 源码");
     t.check(d.contains("total") && d["total"]["tokens"].get<int>() > 0, "UI run 明细含 token 汇总");
+    t.check(d.contains("total") && d["total"]["observed"].get<bool>(), "UI 汇总标记 usage 已观测");
+    t.check(d.contains("steps") && d["steps"][0]["tokensObserved"].get<bool>(), "UI 步骤标记 usage 已观测");
     t.check(d.contains("failTools") && d["failTools"].get<int>() == 0, "UI run 明细含失败工具计数");
     t.check(d.contains("collapseThreshold"), "UI run 明细带折叠阈值");
     t.check(webUiPage().body.find("折叠工具调用") != std::string::npos, "UI 页面有折叠/展开工具按钮");
@@ -577,7 +598,7 @@ void testWebUi(TestCtx& t, const std::string& fixturesDir) {
         call.endpoint = "https://api.deepseek.com/v1/chat/completions";
         LLMResponse resp;
         resp.text = "let me search";
-        resp.usage = Usage{100, 20, 0};
+        resp.usage = Usage{100, 20, 0, true};
         resp.finishReason = "tool_calls";
         resp.latencyMs = 1500;
         ToolExec te;
@@ -634,6 +655,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     testModelRoundtrip(t);
     testM2Units(t);
     testToolErrorClassify(t);
+    testUsageObserved(t);
     testM4Units(t, dir);
     testWebUi(t, dir);
 

@@ -53,7 +53,9 @@ void printRun(const Run& run) {
         if (!modelText.empty()) modelText += ", ";
         modelText += m;
     }
-    std::cout << "  token: " << (run.total.promptTokens + run.total.completionTokens) << " · 模型: "
+    const std::string tokenText =
+        run.total.observed ? std::to_string(run.total.promptTokens + run.total.completionTokens) : "—";
+    std::cout << "  token: " << tokenText << " · 模型: "
               << (modelText.empty() ? "-" : modelText) << "\n";
     std::cout << "  时间: " << run.startedAt << " → " << run.endedAt << "\n";
     for (const auto& m : run.missing) std::cout << "  ! " << m << "\n";

@@ -44,7 +44,8 @@ std::string toMarkdownTimeline(const Run& run) {
         }
         out += "| " + std::to_string(i + 1) + " | " + s.kind + " |";
         if (showModel) out += " " + s.call.model + " |";
-        out += " " + rel + " | " + fmtSec(s.response.latencyMs) + " | " + std::to_string(s.tokens) + " | " +
+        out += " " + rel + " | " + fmtSec(s.response.latencyMs) + " | " +
+               (s.response.usage.observed ? std::to_string(s.tokens) : "—") + " | " +
                (tools.empty() ? "-" : tools) + " |\n";
     }
     return out;

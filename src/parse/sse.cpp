@@ -103,6 +103,7 @@ void SseAccumulator::applyDelta(const nlohmann::json& delta) {
 }
 
 void SseAccumulator::applyUsage(const nlohmann::json& usage) {
+    usage_.observed = true;
     usage_.promptTokens = usage.value("prompt_tokens", 0);
     usage_.completionTokens = usage.value("completion_tokens", 0);
     if (usage.contains("prompt_tokens_details") && usage["prompt_tokens_details"].is_object()) {

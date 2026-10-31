@@ -37,7 +37,8 @@ void printSummary(const RunSummary& s) {
         std::cout << "  （未捕获到 LLM 流量）\n";
         return;
     }
-    std::cout << "  " << s.stepCount << " steps · " << s.toolCount << " tools · " << s.totalTokens << " tokens"
+    std::cout << "  " << s.stepCount << " steps · " << s.toolCount << " tools · "
+              << (s.usageObserved ? std::to_string(s.totalTokens) : std::string("—")) << " tokens"
               << (s.incomplete ? " · ⚠ incomplete" : "") << "\n";
     for (const auto& m : s.missing) std::cout << "  ! " << m << "\n";
 }

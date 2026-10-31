@@ -45,6 +45,8 @@ void readMetaFile(const std::string& metaPath, RunMeta& m) {
     m.requestCount = j.value("request_count", 0);
     m.retryCount = j.value("retry_count", 0);
     m.totalTokens = j.value("total_tokens", 0);
+    // 旧 meta 没有 usage_observed：有非零 token 就视为观测到
+    m.usageObserved = j.value("usage_observed", m.totalTokens > 0);
     m.reportPath = j.value("report", "");
     m.primary = j.value("primary", "");
     if (j.contains("runs") && j["runs"].is_array()) {
@@ -56,6 +58,7 @@ void readMetaFile(const std::string& metaPath, RunMeta& m) {
             b.steps = x.value("steps", 0);
             b.tools = x.value("tools", 0);
             b.tokens = x.value("tokens", 0);
+            b.usageObserved = x.value("usage_observed", b.tokens > 0);
             b.requests = x.value("requests", 0);
             b.retries = x.value("retries", 0);
             b.fuzzyEdges = x.value("fuzzy_edges", 0);

@@ -47,6 +47,8 @@ struct Usage {
     int promptTokens = 0;
     int completionTokens = 0;
     int cachedTokens = 0;
+    // 上游是否真的给了 usage 对象（P2-9）：false 时 0 token 只是"未观测"，展示为 "—"
+    bool observed = false;
 };
 
 struct LLMCall {

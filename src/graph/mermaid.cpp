@@ -108,7 +108,7 @@ std::string toMermaid(const Run& run, const MermaidOptions& opts) {
         }
         const Step& s = run.steps[b.begin];
         std::string label = circled(b.begin + 1) + " " + s.call.model;
-        label += " · " + std::to_string(s.tokens) + " tok";
+        label += s.response.usage.observed ? " · " + std::to_string(s.tokens) + " tok" : " · token —";
         if (s.response.latencyMs > 0) label += " · " + fmtSeconds(s.response.latencyMs);
         if (!s.response.toolCalls.empty()) {
             label += "<br/>tool_calls: ";

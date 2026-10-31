@@ -136,6 +136,7 @@ ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts) {
                 run.total.promptTokens += cp.resp.usage.promptTokens;
                 run.total.completionTokens += cp.resp.usage.completionTokens;
                 run.total.cachedTokens += cp.resp.usage.cachedTokens;
+                run.total.observed = run.total.observed || cp.resp.usage.observed;
                 run.steps.push_back(std::move(step));
             }
 
