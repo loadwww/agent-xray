@@ -8,7 +8,7 @@
 
 - 仓库：`https://github.com/loadwww/agent-xray`，`master` 分支，HEAD = `9c7e73e`
 - 语言：C++17；依赖只有 `third_party/nlohmann/json.hpp` 与 `third_party/cpp-httplib/httplib.h`（header-only）
-- 基线 selftest：174 项；当前 **213 passed / 0 failed**（Windows 与 WSL Linux 均实测）
+- 基线 selftest：174 项；当前 **240 passed / 0 failed**（Windows 与 WSL Linux 均实测）
 - 工作单原文：`agent-xray-improvement-plan.txt`（完整任务清单在下方第四节引用）
 
 ### 构建命令
@@ -110,6 +110,14 @@ cmake --build build -j
 - e2e：mock_openai 新增 `__mode/usage_reject`，Windows/Linux 各加一条降级用例
 - 验收：selftest 234 全过；Windows e2e 与 WSL `e2e_proxy.sh` 全过
 
+### P2-9 区分 0 token 与未观测 — commit `6ef55f6`
+- `Usage.observed`：`parse/openai.cpp` / `parse/sse.cpp` 仅在上游真的给了 `usage` 对象时置 true，
+  上游明确返回 0 token 也算观测到；旧 `run.json` 无该字段时按"数值非零"回退
+- 链层 `run.total.observed` 按 Step OR 聚合；`finalize`/`meta.json`/`run_index` 增 `usage_observed`（旧 meta 回退看 total_tokens）
+- 展示层未观测时统一显示 `—`：`axr list/show/run/serve/replay/diff`、`report.md`（Token 表逐 Step 也是 `—`）、`graph.mmd`、时间线、Web UI（侧栏/chips/流程图/明细表）
+- selftest：`testUsageObserved` 覆盖有 usage / 无 usage / 明确 0 token 三分支 + 序列化回环
+- 验收：Windows / WSL Linux selftest 240 全过；WSL `e2e_proxy.sh` 全过（312 tokens 仍正常显示）
+
 ## 三、关键代码事实（供下一个对话快速定位）
 
 - 转发层平台实现：`src/proxy/forward_winhttp.cpp`（`#ifdef _WIN32`）+ `src/proxy/forward_curl.cpp`（其它平台，libcurl）
@@ -127,9 +135,8 @@ cmake --build build -j
 
 ### 第三批（P2-7 ~ P2-12 低成本准确性）
 
-> P2-7、P2-8 已完成（见第二节）。
+> P2-7、P2-8、P2-9 已完成（见第二节）。
 
-- **P2-9 区分 0 token 与未观测**：`Usage.observed`；!observed 显示 "—"
 - **P2-10 run id 防撞**：追加 4 位随机或 session 序号（如 `...-f33017ac-7d2e`）；selftest id 断言同步更新；旧 id 仍可读
 - **P2-11 工具耗时来源标注**：`ToolExec.durationSource = inferred|mcp|otel`；UI "~" 只用于 inferred
 - **P2-12 修正 OLLAMA_HOST 注入**：删除注入，或 README 明确用 `/ollama/v1`；e2e 覆盖
