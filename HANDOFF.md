@@ -8,7 +8,7 @@
 
 - 仓库：`https://github.com/loadwww/agent-xray`，`master` 分支，HEAD = `9c7e73e`
 - 语言：C++17；依赖只有 `third_party/nlohmann/json.hpp` 与 `third_party/cpp-httplib/httplib.h`（header-only）
-- 基线 selftest：174 项；当前 **240 passed / 0 failed**（Windows 与 WSL Linux 均实测）
+- 基线 selftest：174 项；当前 **243 passed / 0 failed**（Windows 与 WSL Linux 均实测）
 - 工作单原文：`agent-xray-improvement-plan.txt`（完整任务清单在下方第四节引用）
 
 ### 构建命令
@@ -118,6 +118,13 @@ cmake --build build -j
 - selftest：`testUsageObserved` 覆盖有 usage / 无 usage / 明确 0 token 三分支 + 序列化回环
 - 验收：Windows / WSL Linux selftest 240 全过；WSL `e2e_proxy.sh` 全过（312 tokens 仍正常显示）
 
+### P2-10 run id 防撞 — commit `2b703b9`
+- `src/chain/run.cpp`：`run.id` 尾部追加 4 位 16 进制序号（`YYYYMMDD-HHMMSS-rootHash-0001`）
+- 用建链内 run 序号而非随机数：实时视图与 replay 反复建链时 id 稳定，同时同一链内必不重复
+- 旧的不带序号的 run id 仍按字符串原样可读（代码不校验格式）
+- selftest：T14 增加 id 格式、同链唯一、重复建链稳定三条断言
+- 验收：Windows / WSL Linux selftest 243 全过
+
 ## 三、关键代码事实（供下一个对话快速定位）
 
 - 转发层平台实现：`src/proxy/forward_winhttp.cpp`（`#ifdef _WIN32`）+ `src/proxy/forward_curl.cpp`（其它平台，libcurl）
@@ -135,9 +142,8 @@ cmake --build build -j
 
 ### 第三批（P2-7 ~ P2-12 低成本准确性）
 
-> P2-7、P2-8、P2-9 已完成（见第二节）。
+> P2-7、P2-8、P2-9、P2-10 已完成（见第二节）。
 
-- **P2-10 run id 防撞**：追加 4 位随机或 session 序号（如 `...-f33017ac-7d2e`）；selftest id 断言同步更新；旧 id 仍可读
 - **P2-11 工具耗时来源标注**：`ToolExec.durationSource = inferred|mcp|otel`；UI "~" 只用于 inferred
 - **P2-12 修正 OLLAMA_HOST 注入**：删除注入，或 README 明确用 `/ollama/v1`；e2e 覆盖
 
