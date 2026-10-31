@@ -144,8 +144,8 @@ proxy:
       model_map:            # 客户端只认 gpt-4o 之类的名字时，转发前替换 model 字段
         gpt-4o: deepseek-chat
         gpt-4-turbo: deepseek-chat
-    - match: "/ollama"    # /ollama/chat/completions → http://127.0.0.1:11434/v1/chat/completions
-      url: "http://127.0.0.1:11434/v1"
+    - match: "/ollama"    # /ollama/v1/chat/completions → http://127.0.0.1:11434/v1/chat/completions
+      url: "http://127.0.0.1:11434"
       name: "ollama"
 
   inject_usage: true      # 默认开：流式请求补 stream_options.include_usage，否则拿不到 token；
@@ -157,6 +157,11 @@ proxy:
 ```
 
 `model_map` 命中后日志会打印 `模型名改写: gpt-4o -> deepseek-chat`，落盘记录的是真实发给上游的请求体。
+
+本地 Ollama 对外是 OpenAI 兼容的 `/v1`；经代理访问时把客户端 base URL 写成
+`http://127.0.0.1:8080/ollama/v1`（由上面的 `/ollama` 路由转到 `http://127.0.0.1:11434/v1`）。
+`axr run` 只注入 OpenAI 兼容的 `OPENAI_BASE_URL`/`OPENAI_API_BASE`/`DEEPSEEK_BASE_URL`，
+不再注入 `OLLAMA_HOST`：该变量指向 ollama 原生 `/api/*`，代理不还原也不统计。
 
 ## 边界（如实说明）
 

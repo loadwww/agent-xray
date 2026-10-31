@@ -161,7 +161,7 @@ Config defaultConfig() {
     Config cfg;
     cfg.proxy.upstreams = {
         UpstreamDef{"/v1", "https://api.deepseek.com/v1", "deepseek"},
-        UpstreamDef{"/ollama", "http://127.0.0.1:11434/v1", "ollama"},
+        UpstreamDef{"/ollama", "http://127.0.0.1:11434", "ollama"},
     };
     cfg.storage.root = defaultStorageRoot();
     return cfg;

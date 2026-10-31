@@ -41,8 +41,12 @@ done
 [ "$ready" -eq 1 ]; check "$?" "mock_openai 就绪"
 
 echo "[1] axr run：非流式，3 轮工具调用 + 最终回答"
-"$AXR" run --config "$CFG" --root "$RUNS_ROOT" -- "$PYTHON" "$AGENT"
-check "$?" "axr run 退出码 0"
+RUN1_OUT=$("$AXR" run --config "$CFG" --root "$RUNS_ROOT" -- "$PYTHON" "$AGENT" 2>&1)
+RUN1_RC=$?
+echo "$RUN1_OUT"
+check "$RUN1_RC" "axr run 退出码 0"
+echo "$RUN1_OUT" | grep -q "ollama_host = (unset)"
+check "$?" "P2-12 不再注入 OLLAMA_HOST"
 
 RUN1=$(newest_run)
 [ -n "$RUN1" ]; check "$?" "生成 run 目录"
@@ -106,6 +110,18 @@ PYEOF
 )
 [ "$DEGRADE_META" -eq 1 ]; check "$?" "meta：usage_injected=false / rewritten=true"
 curl -s -m 5 "http://127.0.0.1:9099/__mode/ok" >/dev/null
+
+echo "[4] P2-12 本地 ollama 走 /ollama/v1 前缀仍能被采集"
+OLLAMA_OUT=$(AXR_FAKE_PATH=/ollama/v1 "$AXR" run --config "$CFG" --root "$RUNS_ROOT" -- "$PYTHON" "$AGENT" 2>&1)
+OLLAMA_RC=$?
+echo "$OLLAMA_OUT"
+check "$OLLAMA_RC" "ollama 前缀 axr run 退出码 0"
+echo "$OLLAMA_OUT" | grep -q "/ollama/v1"
+check "$?" "客户端请求发到 /ollama/v1"
+RUN4=$(newest_run)
+RUN4=${RUN4%/}
+OLLAMA_STEPS=$("$PYTHON" -c "import json,sys;print(len(json.load(open(sys.argv[1]))['steps']))" "$RUN4/run.json" 2>/dev/null)
+[ "${OLLAMA_STEPS:-0}" -ge 3 ]; check "$?" "ollama 前缀 run 还原步数 >= 3（实际 ${OLLAMA_STEPS:-0}）"
 
 if [ "$FAIL" -gt 0 ]; then
     echo

@@ -44,8 +44,11 @@ try {
     if (-not $ready) { throw "mock_openai 未就绪" }
 
     Write-Host "[1] axr run：非流式，3 轮工具调用 + 最终回答"
-    & $axr run --config $cfg --root $runsRoot -- $python $agent
+    $ErrorActionPreference = "Continue"
+    $run1Out = & $axr run --config $cfg --root $runsRoot -- $python $agent 2>&1 | Out-String
+    $ErrorActionPreference = "Stop"
     Check ($LASTEXITCODE -eq 0) "axr run 退出码 0"
+    Check ($run1Out -match "ollama_host = \(unset\)") "P2-12 不再注入 OLLAMA_HOST"
 
     $run1 = NewestRun
     Check ($null -ne $run1) "生成 run 目录"
@@ -112,6 +115,18 @@ try {
     Check ($meta3.usage_injected -eq $false) "meta.usage_injected = false"
     Check ($meta3.rewritten -eq $true) "meta.rewritten = true（记录注入改写）"
     Invoke-WebRequest -Uri "http://127.0.0.1:9099/__mode/ok" -TimeoutSec 5 -UseBasicParsing | Out-Null
+
+    Write-Host "[3.7] P2-12 本地 ollama 走 /ollama/v1 前缀仍能被采集"
+    $env:AXR_FAKE_PATH = "/ollama/v1"
+    $ErrorActionPreference = "Continue"
+    $ollamaOut = & $axr run --config $cfg --root $runsRoot -- $python $agent 2>&1 | Out-String
+    $ErrorActionPreference = "Stop"
+    Remove-Item Env:\AXR_FAKE_PATH -ErrorAction SilentlyContinue
+    Check ($LASTEXITCODE -eq 0) "ollama 前缀 axr run 退出码 0"
+    Check ($ollamaOut -match "/ollama/v1") "客户端请求发到 /ollama/v1"
+    $runOllama = NewestRun
+    $ollamaRun = Get-Content (Join-Path $runOllama.FullName "run.json") -Raw | ConvertFrom-Json
+    Check ($ollamaRun.steps.Count -ge 3) "ollama 前缀 run 还原步数 >= 3（实际 $($ollamaRun.steps.Count)）"
 
     Write-Host "[4] axr serve：前台代理 + 路由转发 + 未匹配 404"
     $serveRoot = Join-Path $build "e2e-serve"

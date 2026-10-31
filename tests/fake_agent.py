@@ -9,6 +9,11 @@ import urllib.request
 BASE = os.environ.get("OPENAI_BASE_URL", "")
 API_KEY = "sk-0123456789abcdefghijklmnopqrstuvwxyz"
 
+# 验收用：AXR_FAKE_PATH 可把 /v1 换成 /ollama/v1，验证 ollama 前缀路由（P2-12）
+BASE_PATH = os.environ.get("AXR_FAKE_PATH", "/v1")
+if BASE.endswith("/v1"):
+    BASE = BASE[:-3] + BASE_PATH
+
 TOOLS = [{
     "type": "function",
     "function": {
@@ -44,6 +49,7 @@ def main():
         print("OPENAI_BASE_URL 未被注入", file=sys.stderr)
         return 2
     print("[agent] base =", BASE)
+    print("[agent] ollama_host =", os.environ.get("OLLAMA_HOST", "(unset)"))
 
     if "--stream" in sys.argv:
         payload = json.dumps({

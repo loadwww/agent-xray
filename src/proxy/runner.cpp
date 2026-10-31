@@ -31,11 +31,12 @@ Result<RunSummary> runTarget(const Config& cfg, const std::vector<std::string>& 
     }
 
     const std::string base = "http://" + cfg.proxy.bind + ":" + std::to_string(cfg.proxy.listen);
+    // 只注入 OpenAI 兼容 base URL。OLLAMA_HOST 的语义是 ollama 原生 /api 客户端入口，
+    // 代理不解析 /api/*，注入它既不能工作也会误导；走本地 ollama 请用 /ollama/v1（见 README）
     std::map<std::string, std::string> env = {
         {"OPENAI_BASE_URL", base + "/v1"},
         {"OPENAI_API_BASE", base + "/v1"},
         {"DEEPSEEK_BASE_URL", base + "/v1"},
-        {"OLLAMA_HOST", base + "/ollama"},
     };
 
     std::string cmdText;
