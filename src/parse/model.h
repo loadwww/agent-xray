@@ -83,7 +83,8 @@ struct ToolExec {
     // none = 未发现失败；inferred = 按结果文本推断；confirmed = 结果 JSON 明确报错 / 协议层 is_error
     std::string errorKind = "none";
     int durationMs = 0;
-    bool approx = true;     // 从流量推断时恒为 true
+    // 耗时来源：inferred = 由相邻请求时间差推断（流量推断）；mcp = MCP 代理实测；otel = OTel span 实测
+    std::string durationSource = "inferred";
 };
 
 struct Step {

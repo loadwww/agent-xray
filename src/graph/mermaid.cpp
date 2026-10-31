@@ -141,7 +141,12 @@ std::string toMermaid(const Run& run, const MermaidOptions& opts) {
             const std::string id = "T" + std::to_string(b.begin) + "_" + std::to_string(t);
             std::string label = "tool: " + te.name;
             if (!te.arguments.empty()) label += "<br/>" + shorten(te.arguments, 48);
-            if (te.durationMs > 0) label += "<br/>~" + fmtSeconds(te.durationMs);
+            if (te.durationMs > 0) {
+                // "~" 只用于从相邻请求时间差推断的耗时；实测来源不加波浪号
+                label += "<br/>";
+                if (te.durationSource == "inferred") label += "~";
+                label += fmtSeconds(te.durationMs);
+            }
             out += "    " + id + "{\"" + escapeMermaidLabel(label) + "\"}\n";
             out += "    " + b.id + " --> " + id + "\n";
             if (!nextId.empty()) out += "    " + id + " --> " + nextId + "\n";

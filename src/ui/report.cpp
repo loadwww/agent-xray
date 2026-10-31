@@ -92,9 +92,11 @@ std::string buildReport(const Run& run, const MermaidOptions& mo) {
         for (const auto& s : run.steps) {
             for (const auto& te : s.tools) {
                 ++k;
+                const std::string dur = te.durationMs > 0
+                                            ? (te.durationSource == "inferred" ? "~" : "") + fmtSec(te.durationMs)
+                                            : "-";
                 out += "| " + std::to_string(k) + " | " + cell(te.name, 24) + " | " + cell(te.arguments, 40) +
-                       " | " + cell(te.result, 40) + " | " + (te.durationMs > 0 ? "~" + fmtSec(te.durationMs) : "-") +
-                       " |\n";
+                       " | " + cell(te.result, 40) + " | " + dur + " |\n";
             }
         }
         out += "\n";

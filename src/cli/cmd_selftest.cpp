@@ -105,6 +105,7 @@ void testModelRoundtrip(TestCtx& t) {
     te.result = "晴";
     te.errorKind = "confirmed";
     te.durationMs = 1234;
+    te.durationSource = "mcp";
 
     Step s;
     s.index = 0;
@@ -121,6 +122,14 @@ void testModelRoundtrip(TestCtx& t) {
     t.check(j1.dump() == j2.dump(), "Run 序列化→反序列化→再序列化 一致");
     t.check(back.steps[0].tools[0].name == "get_weather", "反序列化保留工具名");
     t.check(back.steps[0].tools[0].errorKind == "confirmed", "反序列化保留工具失败等级");
+    t.check(back.steps[0].tools[0].durationSource == "mcp", "反序列化保留工具耗时来源");
+    {
+        // P2-11 旧 run.json 只有 approx 布尔 → 等价于 inferred；未知来源回落 inferred
+        ToolExec legacy = nlohmann::json{{"duration_ms", 10}, {"approx", true}};
+        t.check(legacy.durationSource == "inferred", "P2-11 旧 approx 字段回退为 inferred");
+        ToolExec bogus = nlohmann::json{{"duration_source", "bogus"}};
+        t.check(bogus.durationSource == "inferred", "P2-11 未知耗时来源回落为 inferred");
+    }
     t.check(back.total.promptTokens == 100, "反序列化保留 usage");
     t.check(back.total.observed && back.steps[0].response.usage.observed, "反序列化保留 usage.observed");
     t.check(back.missing.size() == 1, "反序列化保留 missing");
@@ -501,7 +510,8 @@ void testM4Units(TestCtx& t, const std::string& fixturesDir) {
         resp.toolCalls.push_back(ToolCall{"call_1", "get_weather", R"({"city":"北京"})"});
         const Step s = buildStep(0, LLMCall{}, resp, {});
         t.check(s.tools.size() == 1 && s.tools[0].name == "get_weather", "真实 agent 文本回填仍识别工具调用");
-        t.check(s.tools[0].result.empty() && s.tools[0].approx, "文本回填时工具结果留空、标记推断");
+        t.check(s.tools[0].result.empty() && s.tools[0].durationSource == "inferred",
+                "文本回填时工具结果留空、耗时标记推断");
         t.check(s.kind == "llm", "有真实工具调用时 Step 不是 final");
 
         // 终止型工具 final_answer：不计入工具，Step 视为 final，末尾不报缺失
@@ -686,6 +696,14 @@ int cmdSelftest(const std::vector<std::string>& args) {
         t.check(r.steps[1].tokens == 95, "T2 第二步 token 数");
         // resp_body 解析曾把整个结构体覆盖，导致 latency_ms 丢失（时间线恒为 0.0s）
         t.check(r.steps[1].response.latencyMs == 1200, "T2 步骤耗时保留 resp 事件的 latency_ms");
+
+        // P2-11 耗时来源：流量推断才带 "~"，实测来源（mcp/otel）不带
+        t.check(r.steps[0].tools[0].durationSource == "inferred", "P2-11 流量推断的耗时标记 inferred");
+        t.check(toMermaid(r).find("&lt;br/&gt;~") != std::string::npos, "P2-11 inferred 耗时在图里带 ~");
+        Run measured = r;
+        measured.steps[0].tools[0].durationSource = "otel";
+        t.check(toMermaid(measured).find("&lt;br/&gt;~") == std::string::npos, "P2-11 otel 耗时在图里不带 ~");
+        t.check(buildReport(measured).find("~0.5s") == std::string::npos, "P2-11 otel 耗时在报告里不带 ~");
     });
 
     // T3 并行工具

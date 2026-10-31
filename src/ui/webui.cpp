@@ -87,7 +87,7 @@ nlohmann::json stepToJson(const Step& s) {
         jt["isError"] = failed;                    // 兼容旧前端字段
         jt["errorInferred"] = failed && !confirmed; // 兼容旧前端字段
         jt["errorConfirmed"] = confirmed;
-        jt["approx"] = t.approx;
+        jt["durationSource"] = t.durationSource;
         jt["hasResult"] = !t.result.empty();
         jt["durationMs"] = t.durationMs;
         tools.push_back(jt);
@@ -441,7 +441,7 @@ function chips(d) {
       const c = confirmed ? '#f85149' : (inferred ? '#d29922' : (t.hasResult ? '#3fb950' : '#55637a'));
       g += `<rect x="${X2}" y="${ty}" width="${TOOLW}" height="${TOOLH}" rx="8" fill="${confirmed ? '#20151a' : (inferred ? '#221a0e' : '#131a22')}" stroke="${c}" stroke-width="1.5"><title>${esc(t.result || t.arguments || '')}</title></rect>`;
       g += `<text x="${X2 + 12}" y="${ty + 22}" fill="${confirmed ? '#ffb3b0' : (inferred ? '#f0d795' : '#e6edf3')}" font-size="12" font-weight="600">${esc(t.name)}${confirmed ? ' · 失败' : (inferred ? ' · 疑似失败' : (t.hasResult ? '' : ' · 结果未观测'))}</text>`;
-      g += `<text x="${X2 + 12}" y="${ty + 40}" fill="#8b98a9" font-size="11">${t.durationMs}ms · ${esc((t.arguments || '').slice(0, 40))}</text>`;
+      g += `<text x="${X2 + 12}" y="${ty + 40}" fill="#8b98a9" font-size="11">${t.durationSource === 'inferred' ? '~' : ''}${t.durationMs}ms · ${esc((t.arguments || '').slice(0, 40))}</text>`;
     });
   });
   return `<div class="flow"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
@@ -532,7 +532,7 @@ function stepsTable(d) {
       ${multi ? `<td class="mono">${esc(s.model || '-')}</td>` : ''}
       <td class="mono">${s.latencyMs}ms</td>
       <td class="mono">${s.tokensObserved === false ? '—' : s.promptTokens + ' / ' + s.completionTokens + (s.cachedTokens ? ' / 缓存 ' + s.cachedTokens : '')}</td>
-      <td>${s.tools.map(t => `<span class="tag ${t.errorKind === 'confirmed' ? 'err' : (t.errorKind === 'inferred' ? 'warn' : '')}" title="${esc(t.errorKind === 'confirmed' ? '明确失败（协议标记或结果 JSON 报错）' : (t.errorKind === 'inferred' ? '按结果文本推断为失败' : ''))}">${esc(t.name)} · ${t.durationMs}ms${t.errorKind === 'confirmed' ? ' · 失败' : (t.errorKind === 'inferred' ? ' · 疑似失败' : '')}</span>`).join(' ') || '<span class="muted">-</span>'}</td>
+      <td>${s.tools.map(t => `<span class="tag ${t.errorKind === 'confirmed' ? 'err' : (t.errorKind === 'inferred' ? 'warn' : '')}" title="${esc(t.errorKind === 'confirmed' ? '明确失败（协议标记或结果 JSON 报错）' : (t.errorKind === 'inferred' ? '按结果文本推断为失败' : ''))}">${esc(t.name)} · ${t.durationSource === 'inferred' ? '~' : ''}${t.durationMs}ms${t.errorKind === 'confirmed' ? ' · 失败' : (t.errorKind === 'inferred' ? ' · 疑似失败' : '')}</span>`).join(' ') || '<span class="muted">-</span>'}</td>
       <td>${s.fuzzy ? '<span class="tag fuzzy">推测连接</span> ' : ''}${esc((s.text || '').replace(/\s+/g, ' ').slice(0, 90))}</td>
     </tr>`).join('');
   return `<table><thead><tr><th>#</th>${multi ? '<th>模型</th>' : ''}<th>耗时</th><th>token（提示/补全）</th><th>工具</th><th>回复摘要</th></tr></thead><tbody>${rows}</tbody></table>`;
@@ -545,7 +545,7 @@ function stepDetails(d) {
       <div>
         <div class="muted" style="margin-bottom:8px">${esc(s.endpoint)}</div>
         <pre>${esc(s.text || '(无文本)')}</pre>
-        ${s.tools.map(t => `<div style="margin-top:10px"><div>${esc(t.name)} <span class="muted">${t.durationMs}ms${t.errorKind === 'confirmed' ? ' · 失败' : (t.errorKind === 'inferred' ? ' · 疑似失败（按结果文本推断，上游未标 is_error）' : '')}</span></div>
+        ${s.tools.map(t => `<div style="margin-top:10px"><div>${esc(t.name)} <span class="muted">${t.durationSource === 'inferred' ? '~' : ''}${t.durationMs}ms${t.errorKind === 'confirmed' ? ' · 失败' : (t.errorKind === 'inferred' ? ' · 疑似失败（按结果文本推断，上游未标 is_error）' : '')}</span></div>
           <pre>参数: ${esc(t.arguments || '-')}\n结果: ${esc(t.result || '-')}</pre></div>`).join('')}
       </div>
     </details>`).join('');

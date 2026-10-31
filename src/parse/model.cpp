@@ -154,7 +154,7 @@ void from_json(const nlohmann::json& j, LLMResponse& r) {
 void to_json(nlohmann::json& j, const ToolExec& t) {
     j = nlohmann::json{{"call_id", t.callId}, {"name", t.name},           {"arguments", t.arguments},
                        {"result", t.result},  {"error_kind", t.errorKind}, {"duration_ms", t.durationMs},
-                       {"approx", t.approx}};
+                       {"duration_source", t.durationSource}};
 }
 void from_json(const nlohmann::json& j, ToolExec& t) {
     t.callId = strOr(j, "call_id");
@@ -166,7 +166,10 @@ void from_json(const nlohmann::json& j, ToolExec& t) {
     if (t.errorKind.empty()) t.errorKind = valueOr<bool>(j, "is_error", false) ? "confirmed" : "none";
     if (t.errorKind != "none" && t.errorKind != "inferred" && t.errorKind != "confirmed") t.errorKind = "none";
     t.durationMs = valueOr<int>(j, "duration_ms", 0);
-    t.approx = valueOr<bool>(j, "approx", true);
+    // 旧 run.json 只有 approx 布尔（恒为 true），等价于 inferred；未知值一律回落到 inferred
+    t.durationSource = strOr(j, "duration_source", "");
+    if (t.durationSource != "inferred" && t.durationSource != "mcp" && t.durationSource != "otel")
+        t.durationSource = "inferred";
 }
 
 // ---------- Step ----------

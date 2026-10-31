@@ -80,7 +80,7 @@ std::vector<ToolExec> toolsFromDelta(const std::vector<Message>& prevMsgs,
         te.result = firstText(m);
         te.errorKind = classifyToolError(te.result, m.isError, errorPatterns);
         te.durationMs = approxDurationMs;
-        te.approx = true; // 无 MCP 代理时恒为推断值
+        te.durationSource = "inferred"; // 无 MCP 代理 / OTel span 时只能从流量推断
 
         const ToolCall* tc = findToolCall(prevRespCalls, m.toolCallId);
         if (tc) {
@@ -116,7 +116,7 @@ Step buildStep(int index, const LLMCall& call, const LLMResponse& resp, std::vec
         te.callId = tc.id;
         te.name = tc.name;
         te.arguments = tc.arguments;
-        te.approx = true;
+        te.durationSource = "inferred";
         tools.push_back(te);
     }
 
