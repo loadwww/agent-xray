@@ -1,5 +1,8 @@
 #include "proxy/inject.h"
 
+#include <algorithm>
+#include <cctype>
+
 #include <nlohmann/json.hpp>
 
 namespace axr {
@@ -22,6 +25,14 @@ bool injectStreamUsage(std::string& bodyJson) {
     body["stream_options"]["include_usage"] = true;
     bodyJson = body.dump();
     return true;
+}
+
+bool shouldRetryWithoutUsage(int status, const std::string& responseBody) {
+    if (status != 400 || responseBody.empty()) return false;
+    std::string low = responseBody;
+    std::transform(low.begin(), low.end(), low.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return low.find("stream_options") != std::string::npos;
 }
 
 bool rewriteModel(std::string& bodyJson, const std::map<std::string, std::string>& modelMap,

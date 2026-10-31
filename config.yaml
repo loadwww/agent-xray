@@ -10,7 +10,7 @@ proxy:
   max_body_bytes: 8388608
   max_run_bytes: 268435456
   max_queue: 10000
-  inject_usage: false        # 流式请求自动补 stream_options.include_usage（§7.2.3），改写会在 meta 记 rewritten
+  inject_usage: true         # 流式请求自动补 stream_options.include_usage（默认开）；被上游 400 拒绝时自动去掉重试，meta 记 usage_injected:false
   upstreams:
     - match: "/v1"
       url: "https://api.deepseek.com/v1"

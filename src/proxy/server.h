@@ -38,11 +38,15 @@ public:
     bool running() const;
     // 因 inject_usage 改写的请求数（meta.json 里记 rewritten 用）
     int rewrittenRequests() const { return static_cast<int>(rewritten_.load()); }
+    // 上游拒绝 stream_options 后已自动降级（meta.json 里记 usage_injected:false）
+    bool usageInjectionDisabled() const { return usageInjectionDisabled_.load(); }
 
 private:
     void handle(const httplib::Request& req, httplib::Response& res);
     // S2 真流式：上游读取线程 → 队列 → chunked provider（§7.1.4）
-    void handleStream(const ForwardRequest& fr, const std::string& hop, httplib::Response& res);
+    // fallbackFr 非空时，首个 400 若提到 stream_options 就去掉注入重试一次（P2-8）
+    void handleStream(const ForwardRequest& fr, const ForwardRequest* fallbackFr, const std::string& hop,
+                      httplib::Response& res);
     void emit(const Event& e);
 
     Config cfg_;
@@ -51,6 +55,7 @@ private:
     std::thread thread_;
     std::atomic<long long> hopCounter_{0};
     std::atomic<long long> rewritten_{0};
+    std::atomic<bool> usageInjectionDisabled_{false};
 };
 
 } // namespace axr

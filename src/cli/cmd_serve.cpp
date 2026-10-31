@@ -92,7 +92,8 @@ int cmdServe(const std::vector<std::string>& args) {
     std::cout << "\n正在收尾...\n";
     source.stop();
     rec.flush();
-    const RunSummary s = finalizeRun(runDir, cfg.value, rec.dropped(), source.rewrittenRequests());
+    const RunSummary s = finalizeRun(runDir, cfg.value, rec.dropped(), source.rewrittenRequests(),
+                                     source.usageInjectionDisabled());
     std::cout << "✓ 采集完成\n  run: " << sessionId << "\n";
     printSummary(s);
     if (s.status != "empty") std::cout << "  流程图: " << (std::filesystem::path(runDir) / "graph.mmd").string() << "\n";

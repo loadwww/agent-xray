@@ -148,7 +148,8 @@ proxy:
       url: "http://127.0.0.1:11434/v1"
       name: "ollama"
 
-  inject_usage: true      # 给流式请求补 stream_options.include_usage，否则拿不到 token
+  inject_usage: true      # 默认开：流式请求补 stream_options.include_usage，否则拿不到 token；
+                          # 上游 400 拒绝时自动去掉并重试，meta 记 usage_injected:false
 
   tool_error_patterns:    # 工具失败文本词表（不配置则用内置词表；配置后整体覆盖）
     - "error:"

@@ -70,6 +70,7 @@ void writeMeta(const std::string& runDir, const RunSummary& s, const Run* run,
     m["report"] = s.reportPath;
     if (s.droppedEvents > 0) m["dropped_events"] = s.droppedEvents;
     if (s.rewrittenRequests > 0) m["rewritten"] = true;
+    m["usage_injected"] = s.usageInjected;
     // 解析降级：非白名单端点 / 解析失败 / 截断分别计数，任一 >0 标 parse_degraded
     if (s.unsupportedRequests > 0) m["unsupported_requests"] = s.unsupportedRequests;
     if (s.parseFailed > 0) m["parse_failed"] = s.parseFailed;
@@ -82,11 +83,12 @@ void writeMeta(const std::string& runDir, const RunSummary& s, const Run* run,
 } // namespace
 
 RunSummary finalizeRun(const std::string& runDir, const Config& cfg, long long droppedEvents,
-                       int rewrittenRequests) {
+                       int rewrittenRequests, bool usageInjectionDisabled) {
     RunSummary s;
     s.runDir = runDir;
     s.droppedEvents = droppedEvents;
     s.rewrittenRequests = rewrittenRequests;
+    s.usageInjected = cfg.proxy.injectUsage && !usageInjectionDisabled;
     s.sessionId = std::filesystem::path(runDir).filename().string();
 
     const std::string eventsPath = joinPath(runDir, "events.jsonl");

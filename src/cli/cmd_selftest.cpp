@@ -170,8 +170,18 @@ storage:
         }
     }
 
-    // §7.2.3 inject_usage：配置开关 + 流式请求体改写
+    // §7.2.3 inject_usage：默认开（P2-8）+ 配置开关 + 流式请求体改写 + 400 自动降级
     {
+        auto dflt = parseConfigText("proxy:\n");
+        t.check(dflt.ok() && dflt.value.proxy.injectUsage, "P2-8 inject_usage 默认开启");
+        auto off = parseConfigText("proxy:\n  inject_usage: false\n");
+        t.check(off.ok() && !off.value.proxy.injectUsage, "P2-8 inject_usage 可显式关闭");
+        t.check(shouldRetryWithoutUsage(400, R"({"error":{"message":"unknown field stream_options"}})"),
+                "P2-8 上游 400 提到 stream_options 时降级重试");
+        t.check(!shouldRetryWithoutUsage(400, R"({"error":{"message":"invalid model"}})"),
+                "P2-8 其它 400 不重试");
+        t.check(!shouldRetryWithoutUsage(500, "stream_options"), "P2-8 非 400 不重试");
+
         auto cfg = parseConfigText("proxy:\n  inject_usage: true\n");
         t.check(cfg.ok() && cfg.value.proxy.injectUsage, "M2 inject_usage 配置解析");
 

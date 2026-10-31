@@ -25,7 +25,7 @@ struct Config {
         long long maxBodyBytes = 8LL * 1024 * 1024;
         long long maxRunBytes = 256LL * 1024 * 1024;
         int maxQueue = 10000;
-        bool injectUsage = false; // 流式请求自动补 stream_options.include_usage（§7.2.3）
+        bool injectUsage = true; // 流式请求自动补 stream_options.include_usage（§7.2.3，P2-8 默认开）
         // 工具失败文本词表（P2-7）：配置后整体覆盖内置词表
         std::vector<std::string> toolErrorPatterns;
         std::vector<UpstreamDef> upstreams;

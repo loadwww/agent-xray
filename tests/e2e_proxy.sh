@@ -88,6 +88,25 @@ RUN2=${RUN2%/}
 SSTEPS=$("$PYTHON" -c "import json,sys;print(len(json.load(open(sys.argv[1]))['steps']))" "$RUN2/run.json")
 [ "${SSTEPS:-0}" -ge 1 ]; check "$?" "流式 run 还原出步骤（实际 $SSTEPS）"
 
+echo "[3] P2-8 上游拒绝 stream_options 时自动降级重试"
+curl -s -m 5 "http://127.0.0.1:9099/__mode/usage_reject" >/dev/null
+DEGRADE_OUT=$("$AXR" run --config "$CFG" --root "$RUNS_ROOT" -- "$PYTHON" "$AGENT" --stream 2>&1)
+check "$?" "降级重试后流式 axr run 退出码 0"
+echo "$DEGRADE_OUT" | grep -Eq "sse bytes = [0-9]+"
+check "$?" "降级重试后客户端仍收到 SSE 数据"
+RUN3=$(newest_run)
+[ -n "$RUN3" ]; check "$?" "降级重试 run 已生成"
+RUN3=${RUN3%/}
+DEGRADE_META=$("$PYTHON" - "$RUN3/meta.json" <<'PYEOF'
+import json, sys
+m = json.load(open(sys.argv[1]))
+ok = m.get('usage_injected') is False and m.get('rewritten') is True
+print(1 if ok else 0)
+PYEOF
+)
+[ "$DEGRADE_META" -eq 1 ]; check "$?" "meta：usage_injected=false / rewritten=true"
+curl -s -m 5 "http://127.0.0.1:9099/__mode/ok" >/dev/null
+
 if [ "$FAIL" -gt 0 ]; then
     echo
     echo "结果: $FAIL 项失败"

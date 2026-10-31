@@ -100,6 +100,19 @@ try {
     $streamRun = Get-Content (Join-Path $run2.FullName "run.json") -Raw | ConvertFrom-Json
     Check ($streamRun.steps.Count -ge 1) "流式 run 还原出步骤"
 
+    Write-Host "[3.5] P2-8 上游拒绝 stream_options 时自动降级重试"
+    Invoke-WebRequest -Uri "http://127.0.0.1:9099/__mode/usage_reject" -TimeoutSec 5 -UseBasicParsing | Out-Null
+    $ErrorActionPreference = "Continue"
+    $degradeOut = & $axr run --config $cfg --root $runsRoot -- $python $agent --stream 2>&1 | Out-String
+    $ErrorActionPreference = "Stop"
+    Check ($LASTEXITCODE -eq 0) "降级重试后流式 axr run 退出码 0"
+    Check ($degradeOut -match "sse bytes = (\d+)") "降级重试后客户端仍收到 SSE 数据"
+    $run3 = NewestRun
+    $meta3 = Get-Content (Join-Path $run3.FullName "meta.json") -Raw | ConvertFrom-Json
+    Check ($meta3.usage_injected -eq $false) "meta.usage_injected = false"
+    Check ($meta3.rewritten -eq $true) "meta.rewritten = true（记录注入改写）"
+    Invoke-WebRequest -Uri "http://127.0.0.1:9099/__mode/ok" -TimeoutSec 5 -UseBasicParsing | Out-Null
+
     Write-Host "[4] axr serve：前台代理 + 路由转发 + 未匹配 404"
     $serveRoot = Join-Path $build "e2e-serve"
     if (Test-Path $serveRoot) { Remove-Item -Recurse -Force $serveRoot }

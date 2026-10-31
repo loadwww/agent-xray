@@ -9,7 +9,7 @@
 
 namespace {
 
-std::string g_mode = "ok";     // ok | fail | slow | truncate
+std::string g_mode = "ok";     // ok | fail | slow | usage_reject
 std::string g_case = "plain";  // plain | tool
 
 std::string buildReply(const std::string& text, bool withTool, int promptTokens, int completionTokens) {
@@ -100,6 +100,11 @@ int main(int argc, char** argv) {
         g_mode = "ok";
         res.set_content("{\"mode\":\"ok\"}", "application/json");
     });
+    // P2-8：模拟上游不认 stream_options；代理应去掉注入后重试
+    svr.Get("/__mode/usage_reject", [](const httplib::Request&, httplib::Response& res) {
+        g_mode = "usage_reject";
+        res.set_content("{\"mode\":\"usage_reject\"}", "application/json");
+    });
     svr.Get("/__case/tool", [](const httplib::Request&, httplib::Response& res) {
         g_case = "tool";
         res.set_content("{\"case\":\"tool\"}", "application/json");
@@ -127,6 +132,12 @@ int main(int argc, char** argv) {
         } catch (...) {
             res.status = 400;
             res.set_content("{\"error\":\"bad json\"}", "application/json");
+            return;
+        }
+        if (g_mode == "usage_reject" && body.contains("stream_options")) {
+            res.status = 400;
+            res.set_content("{\"error\":{\"message\":\"Unsupported parameter: stream_options\"}}",
+                            "application/json");
             return;
         }
         const std::size_t msgCount = body.contains("messages") && body["messages"].is_array()

@@ -249,7 +249,9 @@ void ReverseProxySource::handle(const httplib::Request& req, httplib::Response& 
         ++rewritten_;
         logInfo("proxy", hop + " 模型名改写: " + modelApplied);
     }
-    if (cfg_.proxy.injectUsage && stream && injectStreamUsage(forwardBody)) {
+    const std::string bodyBeforeInject = forwardBody;
+    const bool usageInjected = cfg_.proxy.injectUsage && stream && injectStreamUsage(forwardBody);
+    if (usageInjected) {
         ++rewritten_;
         logInfo("proxy", hop + " 已补 stream_options.include_usage");
     }
@@ -274,7 +276,15 @@ void ReverseProxySource::handle(const httplib::Request& req, httplib::Response& 
     for (const auto& kv : headers) fr.headers.emplace_back(kv.first, kv.second);
 
     if (stream) {
-        handleStream(fr, hop, res); // S2：边收边发
+        // 注入过 usage 的流式请求：预置一份去掉注入的请求，上游 400 拒绝时可自动降级
+        ForwardRequest fallback;
+        const ForwardRequest* fallbackPtr = nullptr;
+        if (usageInjected) {
+            fallback = fr;
+            fallback.body = bodyBeforeInject;
+            fallbackPtr = &fallback;
+        }
+        handleStream(fr, fallbackPtr, hop, res); // S2：边收边发
         return;
     }
 
@@ -325,22 +335,57 @@ void ReverseProxySource::handle(const httplib::Request& req, httplib::Response& 
 
 // S2 真流式（§7.1.4）：上游读取在 worker 线程，客户端由 chunked provider 边取边写。
 // 队列满时 worker 阻塞（背压），客户端断开则置 cancelled 并中断上游读取。
-void ReverseProxySource::handleStream(const ForwardRequest& fr, const std::string& hop, httplib::Response& res) {
+void ReverseProxySource::handleStream(const ForwardRequest& fr, const ForwardRequest* fallbackFr,
+                                      const std::string& hop, httplib::Response& res) {
     auto bridge = std::make_shared<StreamBridge>();
     auto emitFn = onEvent_; // 拷贝到 worker，避免 worker 引用 this
-    bridge->start(std::thread([bridge, fr, hop, emitFn] {
-        ForwardResponse fwd = forwardHttp(
-            fr,
-            [&](const std::string& chunk) {
-                Event ce;
-                ce.kind = "sse_chunk";
-                ce.hop = hop;
-                ce.data = chunk;
-                if (emitFn) emitFn(ce);
-                bridge->push(chunk);
-            },
-            [&](int status, const std::string& ctype) { bridge->setHeaders(status, ctype); },
-            [&] { return bridge->abortRequested(); });
+    const bool hasFallback = fallbackFr != nullptr;
+    const ForwardRequest fallback = hasFallback ? *fallbackFr : ForwardRequest{};
+    std::atomic<bool>* usageDisabled = &usageInjectionDisabled_;
+    bridge->start(std::thread([bridge, fr, fallback, hasFallback, hop, emitFn, usageDisabled] {
+        auto emitChunk = [&](const std::string& chunk) {
+            Event ce;
+            ce.kind = "sse_chunk";
+            ce.hop = hop;
+            ce.data = chunk;
+            if (emitFn) emitFn(ce);
+            bridge->push(chunk);
+        };
+
+        // 发一次请求。bufferOn400=true 时先压住 400 响应，确认是否 stream_options 被拒；
+        // 返回 true 表示需要去掉注入重试。
+        auto forwardOnce = [&](const ForwardRequest& request, bool bufferOn400,
+                               ForwardResponse& out) -> bool {
+            bool suspect = false;
+            std::string buffered;
+            out = forwardHttp(
+                request,
+                [&](const std::string& chunk) {
+                    if (suspect) buffered += chunk;
+                    else emitChunk(chunk);
+                },
+                [&](int status, const std::string& ctype) {
+                    if (bufferOn400 && status == 400) {
+                        suspect = true;
+                        return; // 等响应体确认，先不回客户端
+                    }
+                    bridge->setHeaders(status, ctype);
+                },
+                [&] { return bridge->abortRequested(); });
+            if (!suspect) return false;
+            if (shouldRetryWithoutUsage(out.status, out.body)) return true;
+            // 不是 stream_options 的问题：按原 400 返回，补发压住的响应体
+            bridge->setHeaders(out.status, out.contentType);
+            emitChunk(buffered);
+            return false;
+        };
+
+        ForwardResponse fwd;
+        if (forwardOnce(fr, hasFallback, fwd)) {
+            usageDisabled->store(true);
+            logWarn("proxy", hop + " 上游拒绝 stream_options，已去掉注入重试（usage_injected:false）");
+            forwardOnce(fallback, false, fwd);
+        }
 
         if (!fwd.error.empty()) {
             Event ee;
