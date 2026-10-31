@@ -20,12 +20,13 @@ jobs:
           .\build\axr.exe selftest
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
-  # Linux 目前只能 replay / 分析已有事件（转发层与子进程是 Windows 实现，P1-4 才解除锁定）；
-  # 此 job 保证非 Windows 平台始终可编译、selftest 全绿
+  # Linux 自 P1-4 起为全功能构建（libcurl 转发层 + POSIX 子进程），可完整采集
   linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: 依赖（find_package(CURL REQUIRED) 需要开发包）
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
       - name: 配置
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: 构建

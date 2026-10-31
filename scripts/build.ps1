@@ -1,4 +1,4 @@
-# AgentXray 一键构建（Windows / PowerShell 5.1+）
+﻿# AgentXray 一键构建（Windows / PowerShell 5.1+）
 # 自动定位 Visual Studio 的 MSVC + Windows SDK，以及 VS 自带的 CMake / Ninja。
 # 不需要手动初始化环境，也不修改系统环境变量。
 #
