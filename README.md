@@ -150,3 +150,7 @@ proxy:
 - **本地模型部署支持**（Ollama / llama.cpp / vLLM / LM Studio 等 OpenAI 兼容服务）：目标是
   `axr serve --local ollama` 自动把 `/v1` 指向 `http://127.0.0.1:11434/v1` 并跳过 API key 校验；
   本地服务不回 `usage` 时先补 `stream_options.include_usage`，仍拿不到就把 token 标为「未观测」，不估算。
+
+## 许可证
+
+[MIT](LICENSE) © 2026 loadwww

@@ -29,3 +29,10 @@ if(MSVC)
     target_compile_options(axr PRIVATE /utf-8 /W3 /permissive-)
     target_compile_options(mock_openai PRIVATE /utf-8 /W3 /permissive-)
 endif()
+
+# POSIX：httplib 的线程池需要 pthread（CI 的 linux job 依赖此行）
+if(NOT WIN32)
+    find_package(Threads REQUIRED)
+    target_link_libraries(axr PRIVATE Threads::Threads)
+    target_link_libraries(mock_openai PRIVATE Threads::Threads)
+endif()
