@@ -119,7 +119,8 @@ ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts) {
                     long long approxMs = 0;
                     if (startNext.ok() && endPrev.ok()) approxMs = diffMillis(startNext.value, endPrev.value);
                     tools = toolsFromDelta(cp.call.messages, next.call.messages, cp.resp.toolCalls,
-                                           static_cast<int>(approxMs > 0 ? approxMs : 0));
+                                           static_cast<int>(approxMs > 0 ? approxMs : 0),
+                                           opts.toolErrorPatterns);
                 }
                 Step step = buildStep(static_cast<int>(k), cp.call, cp.resp, std::move(tools));
                 // 相邻两步之间若是模糊匹配边，标记到后一步（图上画虚线并注"推测"）

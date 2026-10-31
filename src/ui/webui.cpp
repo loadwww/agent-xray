@@ -1,7 +1,6 @@
 #include "ui/webui.h"
 
 #include <algorithm>
-#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -14,33 +13,11 @@
 
 namespace axr {
 
-// 工具结果里的失败信号。协议层没有 isError 时（结果以文本回填），靠文本特征兜底：
-// 典型如 AutoGPT 的 "Error: ... Error code: 403 Forbidden"、"Failed to read webpage"。
-bool toolResultLooksFailed(const std::string& text) {
-    if (text.empty()) return false;
-    std::string low = text.size() > 600 ? text.substr(0, 600) : text;
-    std::transform(low.begin(), low.end(), low.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    const std::size_t p = low.find_first_not_of(" \t\r\n");
-    if (p != std::string::npos && low.compare(p, 5, "error") == 0) return true;
-    static const char* kPatterns[] = {
-        "error:",      "error code", "traceback",  "exception",    "forbidden",  "unauthorized",
-        "rate limit",  "timed out",  "timed-out",  "http 400",     "http 401",   "http 403",
-        "http 404",    "http 429",   "http 500",   "http 502",     "http 503",   "status 400",
-        "status 401",  "status 403", "status 404", "status 429",   "status 500", "unprocessable",
-        "failed to",   "failed:",    "failure",    "unable to",    "denied",     "too much output",
-    };
-    for (const char* pat : kPatterns) {
-        if (low.find(pat) != std::string::npos) return true;
-    }
-    return false;
-}
-
 int countFailedTools(const Run& run) {
     int n = 0;
     for (const auto& s : run.steps) {
         for (const auto& t : s.tools) {
-            if (t.isError || toolResultLooksFailed(t.result)) ++n;
+            if (t.errorKind != "none" && !t.errorKind.empty()) ++n;
         }
     }
     return n;
@@ -94,18 +71,21 @@ nlohmann::json stepToJson(const Step& s) {
     j["messages"] = static_cast<int>(s.call.messages.size());
 
     nlohmann::json tools = nlohmann::json::array();
-    int failCount = 0;
+    int failCount = 0, failConfirmed = 0, failInferred = 0;
     for (const auto& t : s.tools) {
-        // 协议层没给 isError 时，用工具结果文本兜底（403 / Error: / Forbidden …）
-        const bool inferred = !t.isError && toolResultLooksFailed(t.result);
-        const bool failed = t.isError || inferred;
+        const bool failed = t.errorKind != "none" && !t.errorKind.empty();
+        const bool confirmed = failed && t.errorKind == "confirmed";
         if (failed) ++failCount;
+        if (confirmed) ++failConfirmed;
+        else if (failed) ++failInferred;
         nlohmann::json jt;
         jt["name"] = t.name;
         jt["arguments"] = trimText(t.arguments, 600);
         jt["result"] = trimText(t.result, 600);
-        jt["isError"] = failed;
-        jt["errorInferred"] = inferred;
+        jt["errorKind"] = failed ? t.errorKind : "none";
+        jt["isError"] = failed;                    // 兼容旧前端字段
+        jt["errorInferred"] = failed && !confirmed; // 兼容旧前端字段
+        jt["errorConfirmed"] = confirmed;
         jt["approx"] = t.approx;
         jt["hasResult"] = !t.result.empty();
         jt["durationMs"] = t.durationMs;
@@ -113,6 +93,8 @@ nlohmann::json stepToJson(const Step& s) {
     }
     j["tools"] = tools;
     j["failCount"] = failCount;
+    j["failConfirmed"] = failConfirmed;
+    j["failInferred"] = failInferred;
     j["hasError"] = failCount > 0 || !s.response.err.empty();
     return j;
 }
@@ -283,6 +265,7 @@ WebResponse webUiPage() {
   td.mono{font-family:Consolas,monospace;font-size:12px}
   .tag{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;border:1px solid var(--line);color:var(--dim)}
   .tag.err{border-color:var(--bad);color:#ff9d99}
+  .tag.warn{border-color:var(--warn);color:#f0d795}
   .tag.fuzzy{border-color:var(--warn);color:#f0d795}
   .tag.live{border-color:var(--ok);color:#9ae6b4}
   .bad{color:#ff9d99;font-weight:600}
@@ -431,25 +414,29 @@ function chips(d) {
       g += `<line x1="${cx}" y1="${y1}" x2="${cx}" y2="${y2}" stroke="#3b4656" stroke-width="1.5" marker-end="url(#arr)"/>`;
       if (s.fuzzy) g += `<text x="${cx + 8}" y="${(y1 + y2) / 2 + 4}" fill="#d29922" font-size="11">推测</text>`;
     }
-    const bad = s.hasError;
-    const border = bad ? '#f85149' : (s.fuzzy ? '#d29922' : '#4c9aff');
-    g += `<rect x="0" y="${row.y}" width="${STEPW}" height="${STEPH}" rx="10" fill="${bad ? '#20151a' : '#151c26'}" stroke="${border}" stroke-width="${bad ? 2 : 1.5}" ${s.fuzzy && !bad ? 'stroke-dasharray="6 4"' : ''}/>`;
-    g += `<text x="12" y="${row.y + 22}" fill="#e6edf3" font-size="13" font-weight="600">Step ${i + 1}${bad ? ' · 受阻' : ''}</text>`;
+    // 明确失败（confirmed）红，仅按文本推断失败（inferred）琥珀
+    const confirmed = s.failConfirmed > 0 || !!s.error;
+    const inferred = !confirmed && s.failInferred > 0;
+    const bad = confirmed || inferred;
+    const border = confirmed ? '#f85149' : ((inferred || s.fuzzy) ? '#d29922' : '#4c9aff');
+    g += `<rect x="0" y="${row.y}" width="${STEPW}" height="${STEPH}" rx="10" fill="${confirmed ? '#20151a' : (inferred ? '#221a0e' : '#151c26')}" stroke="${border}" stroke-width="${bad ? 2 : 1.5}" ${s.fuzzy && !bad ? 'stroke-dasharray="6 4"' : ''}/>`;
+    g += `<text x="12" y="${row.y + 22}" fill="#e6edf3" font-size="13" font-weight="600">Step ${i + 1}${confirmed ? ' · 受阻' : (inferred ? ' · 疑似受阻' : '')}</text>`;
     if (s.model && s.model !== mainModel) {
       g += `<text x="${STEPW - 10}" y="${row.y + 22}" text-anchor="end" fill="#d29922" font-size="11">${esc(s.model)}</text>`;
     }
     g += `<text x="12" y="${row.y + 42}" fill="#8b98a9" font-size="11">${s.latencyMs}ms · ${s.tokens} tok${s.streamed ? ' · 流式' : ''}</text>`;
     g += `<text x="12" y="${row.y + 60}" fill="#8b98a9" font-size="11">${esc((s.finishReason || '') + ' · 消息 ' + s.messages + ' · 工具定义 ' + s.toolDefs)}</text>`;
     if (collapsed && s.tools.length) {
-      g += `<text x="${STEPW - 10}" y="${row.y + 42}" text-anchor="end" fill="${s.failCount ? '#ff9d99' : '#3fb950'}" font-size="11">${s.tools.length} 工具${s.failCount ? ' · ' + s.failCount + ' 失败' : ''}</text>`;
+      g += `<text x="${STEPW - 10}" y="${row.y + 42}" text-anchor="end" fill="${s.failConfirmed ? '#ff9d99' : (s.failInferred ? '#f0d795' : '#3fb950')}" font-size="11">${s.tools.length} 工具${s.failCount ? ' · ' + s.failCount + ' 失败' : ''}</text>`;
     }
     if (collapsed) return;
     s.tools.forEach((t, j) => {
       const ty = row.y + j * (TOOLH + TGAP);
       g += `<line x1="${STEPW}" y1="${row.y + STEPH / 2}" x2="${X2}" y2="${ty + TOOLH / 2}" stroke="#3b4656" stroke-width="1.5" marker-end="url(#arr)"/>`;
-      const c = t.isError ? '#f85149' : (t.hasResult ? '#3fb950' : '#55637a');
-      g += `<rect x="${X2}" y="${ty}" width="${TOOLW}" height="${TOOLH}" rx="8" fill="${t.isError ? '#20151a' : '#131a22'}" stroke="${c}" stroke-width="1.5"><title>${esc(t.result || t.arguments || '')}</title></rect>`;
-      g += `<text x="${X2 + 12}" y="${ty + 22}" fill="${t.isError ? '#ffb3b0' : '#e6edf3'}" font-size="12" font-weight="600">${esc(t.name)}${t.isError ? ' · 失败' : (t.hasResult ? '' : ' · 结果未观测')}</text>`;
+      const confirmed = t.errorKind === 'confirmed', inferred = t.errorKind === 'inferred';
+      const c = confirmed ? '#f85149' : (inferred ? '#d29922' : (t.hasResult ? '#3fb950' : '#55637a'));
+      g += `<rect x="${X2}" y="${ty}" width="${TOOLW}" height="${TOOLH}" rx="8" fill="${confirmed ? '#20151a' : (inferred ? '#221a0e' : '#131a22')}" stroke="${c}" stroke-width="1.5"><title>${esc(t.result || t.arguments || '')}</title></rect>`;
+      g += `<text x="${X2 + 12}" y="${ty + 22}" fill="${confirmed ? '#ffb3b0' : (inferred ? '#f0d795' : '#e6edf3')}" font-size="12" font-weight="600">${esc(t.name)}${confirmed ? ' · 失败' : (inferred ? ' · 疑似失败' : (t.hasResult ? '' : ' · 结果未观测'))}</text>`;
       g += `<text x="${X2 + 12}" y="${ty + 40}" fill="#8b98a9" font-size="11">${t.durationMs}ms · ${esc((t.arguments || '').slice(0, 40))}</text>`;
     });
   });
@@ -463,6 +450,13 @@ function fmtMs(ms) {
   if (ms < 1000) return Math.round(ms) + 'ms';
   if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
   return Math.floor(ms / 60000) + 'm' + Math.round((ms % 60000) / 1000) + 's';
+}
+
+// 合并同名工具时保留更严重的失败等级
+function worseKind(a, b) {
+  if (a === 'confirmed' || b === 'confirmed') return 'confirmed';
+  if (a === 'inferred' || b === 'inferred') return 'inferred';
+  return 'none';
 }
 
 // 甘特图：模型调用按响应延迟铺；同一步的工具从同一时刻起跑（即并行），宽度为推断耗时
@@ -481,18 +475,20 @@ function gantt(d) {
     const groups = [];
     s.tools.slice(0, MAXROWS * 2).forEach(t => {
       const g = groups.find(x => x.name === t.name);
+      const ek = t.errorKind || 'none';
       if (g) {
         g.n++; g.dur = Math.max(g.dur, t.durationMs || 0);
-        g.err = g.err || !!t.isError; g.nr = g.nr || !t.hasResult;
+        g.ek = worseKind(g.ek, ek); g.nr = g.nr || !t.hasResult;
       } else {
-        groups.push({ name: t.name, n: 1, dur: t.durationMs || 0, err: !!t.isError, nr: !t.hasResult });
+        groups.push({ name: t.name, n: 1, dur: t.durationMs || 0, ek: ek, nr: !t.hasResult });
       }
     });
     groups.slice(0, MAXROWS).forEach(g => {
       rows.push({ label: g.name + (g.n > 1 ? ' ×' + g.n : ''), start: cur,
-        dur: Math.max(g.dur, 2), kind: 'tool', err: g.err, sub: true,
+        dur: Math.max(g.dur, 2), kind: 'tool', ek: g.ek, sub: true,
         tip: g.name + (g.n > 1 ? ' ×' + g.n + ' 并行' : '') + ' ' + fmtMs(g.dur) +
-          (g.err ? '（有失败）' : '') + (g.nr ? '（部分结果未观测）' : '') });
+          (g.ek === 'confirmed' ? '（有失败）' : (g.ek === 'inferred' ? '（疑似失败）' : '')) +
+          (g.nr ? '（部分结果未观测）' : '') });
     });
     cur += tmax;
   });
@@ -510,7 +506,7 @@ function gantt(d) {
   }
   rows.forEach((r, i) => {
     const y = top + i * rowH;
-    const color = r.err ? '#f85149' : (r.kind === 'llm' ? '#4c9aff' : '#3fb950');
+    const color = r.ek === 'confirmed' ? '#f85149' : (r.ek === 'inferred' ? '#d29922' : (r.kind === 'llm' ? '#4c9aff' : '#3fb950'));
     g += `<text x="0" y="${y + 14}" fill="${r.sub ? '#8b98a9' : '#e6edf3'}" font-size="11">${esc((r.sub ? '   ' : '') + r.label)}</text>`;
     g += `<rect x="${px(r.start)}" y="${y + 4}" width="${pw(r.dur)}" height="${rowH - 9}" rx="3" fill="${color}" opacity="${r.kind === 'llm' ? 0.85 : 0.75}"><title>${esc(r.tip)}</title></rect>`;
   });
@@ -520,7 +516,7 @@ function gantt(d) {
   }
   return `<div class="flow"><div class="gantt-head"><b>总耗时 ${fmtMs(total)}</b><span class="muted">模型 = 响应延迟；工具 = 上一条响应结束 → 下一条请求开始（推断）；同一 Step 内的工具同时起跑即并行</span></div>
     <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${g}</svg>
-    <div class="legend"><span><i style="background:#4c9aff"></i>模型调用</span><span><i style="background:#3fb950"></i>工具</span><span><i style="background:#f85149"></i>失败 / 受限</span><span><i style="background:#2a3340"></i>未计入间隙</span></div></div>`;
+    <div class="legend"><span><i style="background:#4c9aff"></i>模型调用</span><span><i style="background:#3fb950"></i>工具</span><span><i style="background:#f85149"></i>明确失败</span><span><i style="background:#d29922"></i>疑似失败（按结果文本推断）</span><span><i style="background:#2a3340"></i>未计入间隙</span></div></div>`;
 }
 
 function stepsTable(d) {
@@ -532,7 +528,7 @@ function stepsTable(d) {
       ${multi ? `<td class="mono">${esc(s.model || '-')}</td>` : ''}
       <td class="mono">${s.latencyMs}ms</td>
       <td class="mono">${s.promptTokens} / ${s.completionTokens}${s.cachedTokens ? ' / 缓存 ' + s.cachedTokens : ''}</td>
-      <td>${s.tools.map(t => `<span class="tag ${t.isError ? 'err' : ''}" title="${esc(t.isError ? (t.errorInferred ? '按结果文本推断为失败' : '协议标记失败') : '')}">${esc(t.name)} · ${t.durationMs}ms${t.isError ? ' · 失败' : ''}</span>`).join(' ') || '<span class="muted">-</span>'}</td>
+      <td>${s.tools.map(t => `<span class="tag ${t.errorKind === 'confirmed' ? 'err' : (t.errorKind === 'inferred' ? 'warn' : '')}" title="${esc(t.errorKind === 'confirmed' ? '明确失败（协议标记或结果 JSON 报错）' : (t.errorKind === 'inferred' ? '按结果文本推断为失败' : ''))}">${esc(t.name)} · ${t.durationMs}ms${t.errorKind === 'confirmed' ? ' · 失败' : (t.errorKind === 'inferred' ? ' · 疑似失败' : '')}</span>`).join(' ') || '<span class="muted">-</span>'}</td>
       <td>${s.fuzzy ? '<span class="tag fuzzy">推测连接</span> ' : ''}${esc((s.text || '').replace(/\s+/g, ' ').slice(0, 90))}</td>
     </tr>`).join('');
   return `<table><thead><tr><th>#</th>${multi ? '<th>模型</th>' : ''}<th>耗时</th><th>token（提示/补全）</th><th>工具</th><th>回复摘要</th></tr></thead><tbody>${rows}</tbody></table>`;
@@ -545,7 +541,7 @@ function stepDetails(d) {
       <div>
         <div class="muted" style="margin-bottom:8px">${esc(s.endpoint)}</div>
         <pre>${esc(s.text || '(无文本)')}</pre>
-        ${s.tools.map(t => `<div style="margin-top:10px"><div>${esc(t.name)} <span class="muted">${t.durationMs}ms${t.isError ? ' · 失败' + (t.errorInferred ? '（按结果文本推断，上游未标 is_error）' : '') : ''}</span></div>
+        ${s.tools.map(t => `<div style="margin-top:10px"><div>${esc(t.name)} <span class="muted">${t.durationMs}ms${t.errorKind === 'confirmed' ? ' · 失败' : (t.errorKind === 'inferred' ? ' · 疑似失败（按结果文本推断，上游未标 is_error）' : '')}</span></div>
           <pre>参数: ${esc(t.arguments || '-')}\n结果: ${esc(t.result || '-')}</pre></div>`).join('')}
       </div>
     </details>`).join('');
@@ -570,8 +566,9 @@ function stepDetails(d) {
   }
   if (d.failTools) {
     const first = d.steps.findIndex(s => s.failCount);
-    html += '<div class="banner bad">有 ' + d.failTools + ' 个工具调用失败或被拒绝（403 / Error …），' +
-      (first >= 0 ? '最早出现在 Step ' + (first + 1) + '：' : '') + '图中已标红，可展开该 Step 看原始结果</div>';
+    html += '<div class="banner bad">有 ' + d.failTools + ' 个工具调用明确失败或疑似失败，' +
+      (first >= 0 ? '最早出现在 Step ' + (first + 1) + '：' : '') +
+      '红色为协议/JSON 明确报错，琥珀色为按结果文本推断，可展开该 Step 看原始结果</div>';
   }
   html += '<h2>时间线</h2>' + gantt(d);
   html += '<h2>流程图' + (collapsed ? ' <span class="muted" style="font-size:11px;font-weight:400">（工具分支已折叠，右上角按钮可展开）</span>' : '') + '</h2>' + flowSvg(d);

@@ -110,6 +110,7 @@ void applyScalar(Config& cfg, const std::string& section, const std::string& key
         else if (key == "max_run_bytes") cfg.proxy.maxRunBytes = toLL(v, cfg.proxy.maxRunBytes);
         else if (key == "max_queue") cfg.proxy.maxQueue = toInt(v, cfg.proxy.maxQueue);
         else if (key == "inject_usage") cfg.proxy.injectUsage = toBool(v, cfg.proxy.injectUsage);
+        else if (key == "tool_error_patterns") cfg.proxy.toolErrorPatterns = parseInlineList(v);
     } else if (section == "chain") {
         if (key == "run_gap_minutes") cfg.chain.runGapMinutes = toInt(v, cfg.chain.runGapMinutes);
         else if (key == "fuzzy_threshold") cfg.chain.fuzzyThreshold = toDouble(v, cfg.chain.fuzzyThreshold);
@@ -171,6 +172,7 @@ ChainOptions Config::chainOptions() const {
     o.runGapMinutes = chain.runGapMinutes;
     o.fuzzyThreshold = chain.fuzzyThreshold;
     o.fuzzyWindow = chain.fuzzyWindow;
+    o.toolErrorPatterns = proxy.toolErrorPatterns;
     return o;
 }
 
@@ -180,7 +182,8 @@ Result<Config> parseConfigText(const std::string& text, const Config& base) {
     std::string section;  // proxy / chain / redact / storage
     std::string subKey;   // upstreams / model_map / headers / patterns
     int modelMapIndent = 0;
-    bool upsCleared = false, hdrCleared = false, patCleared = false;
+    int upstreamsIndent = 0; // upstreams: 的缩进；更深缩进才属于某个 upstream 字段
+    bool upsCleared = false, hdrCleared = false, patCleared = false, tepCleared = false;
 
     std::size_t pos = 0;
     while (pos <= text.size()) {
@@ -212,6 +215,8 @@ Result<Config> parseConfigText(const std::string& text, const Config& base) {
                 else if (k == "name") up.name = v;
                 cfg.proxy.upstreams.push_back(up);
                 subKey = "upstreams"; // 新列表项重新归属 upstreams（model_map 可能刚切换过子键）
+            } else if (section == "proxy" && subKey == "tool_error_patterns") {
+                cfg.proxy.toolErrorPatterns.push_back(unquote(item));
             } else if (section == "redact" && (subKey == "headers" || subKey == "patterns")) {
                 if (subKey == "headers") cfg.redact.headers.push_back(unquote(item));
                 else cfg.redact.patterns.push_back(unquote(item));
@@ -232,6 +237,7 @@ Result<Config> parseConfigText(const std::string& text, const Config& base) {
             } else {
                 subKey = key;
                 if (key == "model_map") modelMapIndent = indent;
+                if (key == "upstreams") upstreamsIndent = indent;
             }
             // 配置文件里的列表覆盖默认值（只清一次，允许列表跨多行）
             if (indent > 0 && section == "proxy" && subKey == "upstreams" && !upsCleared) {
@@ -246,6 +252,10 @@ Result<Config> parseConfigText(const std::string& text, const Config& base) {
                 cfg.redact.patterns.clear();
                 patCleared = true;
             }
+            if (indent > 0 && section == "proxy" && subKey == "tool_error_patterns" && !tepCleared) {
+                cfg.proxy.toolErrorPatterns.clear();
+                tepCleared = true;
+            }
             continue;
         }
 
@@ -258,7 +268,8 @@ Result<Config> parseConfigText(const std::string& text, const Config& base) {
             subKey = "upstreams"; // 缩进退回 upstream 字段层级，后续键仍按 upstream 解析
         }
 
-        if (section == "proxy" && subKey == "upstreams" && indent > 0 && !cfg.proxy.upstreams.empty()) {
+        if (section == "proxy" && subKey == "upstreams" && indent > upstreamsIndent &&
+            !cfg.proxy.upstreams.empty()) {
             UpstreamDef& up = cfg.proxy.upstreams.back();
             if (key == "match") up.match = unquote(value);
             else if (key == "url") up.url = unquote(value);

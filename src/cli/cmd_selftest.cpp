@@ -102,6 +102,7 @@ void testModelRoundtrip(TestCtx& t) {
     te.name = "get_weather";
     te.arguments = "{\"city\":\"北京\"}";
     te.result = "晴";
+    te.errorKind = "confirmed";
     te.durationMs = 1234;
 
     Step s;
@@ -118,6 +119,7 @@ void testModelRoundtrip(TestCtx& t) {
     nlohmann::json j2 = back;
     t.check(j1.dump() == j2.dump(), "Run 序列化→反序列化→再序列化 一致");
     t.check(back.steps[0].tools[0].name == "get_weather", "反序列化保留工具名");
+    t.check(back.steps[0].tools[0].errorKind == "confirmed", "反序列化保留工具失败等级");
     t.check(back.total.promptTokens == 100, "反序列化保留 usage");
     t.check(back.missing.size() == 1, "反序列化保留 missing");
 }
@@ -315,6 +317,46 @@ proxy:
         t.check(expandHome("~/.xray") != "~/.xray", "M2 ~ 展开为真实目录");
         t.check(expandHome("~/.xray").find(".xra/") == std::string::npos, "M2 ~/.xray 展开未把 .xray 截断");
         t.check(expandHome("~/logs") == expandHome("~") + "/logs", "M2 ~ 展开拼接一致");
+    }
+}
+
+// P2-7 工具失败分级 + 词表配置
+void testToolErrorClassify(TestCtx& t) {
+    // 判定顺序：结果 JSON error → 协议层 is_error → 文本启发式
+    t.check(classifyToolError(R"({"error":"boom"})", false) == "confirmed", "P2-7 结果 JSON error 判为 confirmed");
+    t.check(classifyToolError(R"({"error":""})", false) == "none", "P2-7 空 error 字段不算失败");
+    t.check(classifyToolError(R"({"result":"ok"})", true) == "confirmed", "P2-7 协议 is_error 判为 confirmed");
+    t.check(classifyToolError("Error: Error code: 403 Forbidden", false) == "inferred",
+            "P2-7 文本 Error/403 判为 inferred");
+    t.check(classifyToolError("read_webpage: Failed to read webpage", false) == "inferred",
+            "P2-7 文本 Failed to 判为 inferred");
+    t.check(classifyToolError("晴", false) == "none", "P2-7 正常结果判为 none");
+    t.check(classifyToolError("boom happened", false, {"boom"}) == "inferred", "P2-7 自定义词表命中");
+    t.check(classifyToolError("boom happened", false) == "none", "P2-7 未配置时自定义词不生效");
+
+    // 配置：行内列表与多行列表两种写法，并传递到链选项
+    {
+        auto cfg = parseConfigText("proxy:\n  tool_error_patterns: [\"boom\", \"kaput\"]\n");
+        t.check(cfg.ok() && cfg.value.proxy.toolErrorPatterns.size() == 2,
+                "P2-7 tool_error_patterns 行内列表可解析");
+        t.check(cfg.ok() && cfg.value.chainOptions().toolErrorPatterns.size() == 2,
+                "P2-7 词表传递到 ChainOptions");
+    }
+    {
+        auto cfg = parseConfigText("proxy:\n  tool_error_patterns:\n    - boom\n    - kaput\n");
+        t.check(cfg.ok() && cfg.value.proxy.toolErrorPatterns.size() == 2,
+                "P2-7 tool_error_patterns 多行列表可解析");
+    }
+    // upstreams 列表之后的 proxy 键不能被吞进最后一个 upstream
+    {
+        auto cfg = parseConfigText(
+            "proxy:\n  upstreams:\n    - match: \"/v1\"\n      url: \"https://api.example.com/v1\"\n"
+            "  tool_error_patterns: [\"boom\"]\n");
+        t.check(cfg.ok() && cfg.value.proxy.upstreams.size() == 1 && cfg.value.proxy.upstreams[0].url ==
+                    "https://api.example.com/v1",
+                "P2-7 upstreams 之后列表字段仍正确归属");
+        t.check(cfg.ok() && cfg.value.proxy.toolErrorPatterns.size() == 1,
+                "P2-7 upstreams 之后的 tool_error_patterns 可解析");
     }
 }
 
@@ -533,14 +575,14 @@ void testWebUi(TestCtx& t, const std::string& fixturesDir) {
         te.name = "web_search";
         te.arguments = R"({"query":"ai news"})";
         te.result = "Error: Error code: 403 Forbidden - web access denied";
-        te.isError = false; // 协议层没标，靠文本兜底
+        te.errorKind = "inferred"; // 协议层没标，由链层按文本判为推断失败
         te.durationMs = 900;
         ToolExec te2;
         te2.callId = "call_f";
         te2.name = "read_webpage";
         te2.arguments = R"({"url":"https://example.com"})";
         te2.result = "read_webpage: Failed to read webpage: Failed to launch browser: Executable doesn't exist";
-        te2.isError = false;
+        te2.errorKind = "inferred";
         te2.durationMs = 1200;
         Step s;
         s.index = 0;
@@ -557,8 +599,11 @@ void testWebUi(TestCtx& t, const std::string& fixturesDir) {
         t.check(d3.status == 200 && j3.contains("failTools"), "UI 失败 run 明细可读");
         t.check(j3["failTools"].get<int>() == 2, "UI 403 / Failed to 结果都计入失败工具");
         t.check(j3["steps"][0]["hasError"].get<bool>(), "UI 含失败工具的 Step 标记 hasError");
-        t.check(j3["steps"][0]["tools"][0]["isError"].get<bool>(), "UI 403 工具标记为失败");
+        t.check(j3["steps"][0]["tools"][0]["errorKind"].get<std::string>() == "inferred",
+                "UI 403 工具标记为推断失败");
+        t.check(j3["steps"][0]["tools"][0]["isError"].get<bool>(), "UI 推断失败仍计入 isError");
         t.check(j3["steps"][0]["tools"][0]["errorInferred"].get<bool>(), "UI 403 工具标记为文本推断");
+        t.check(j3["steps"][0]["failInferred"].get<int>() == 2, "UI 失败工具按等级计数");
         t.check(j3["steps"][0]["tools"][1]["isError"].get<bool>(), "UI Failed to 工具标记为失败");
     }
 
@@ -578,6 +623,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     testHash(t);
     testModelRoundtrip(t);
     testM2Units(t);
+    testToolErrorClassify(t);
     testM4Units(t, dir);
     testWebUi(t, dir);
 

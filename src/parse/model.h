@@ -77,7 +77,9 @@ struct ToolExec {
     std::string name;
     std::string arguments;
     std::string result;
-    bool isError = false;
+    // 失败等级（判定逻辑见 chain/superstep.h 的 classifyToolError）：
+    // none = 未发现失败；inferred = 按结果文本推断；confirmed = 结果 JSON 明确报错 / 协议层 is_error
+    std::string errorKind = "none";
     int durationMs = 0;
     bool approx = true;     // 从流量推断时恒为 true
 };

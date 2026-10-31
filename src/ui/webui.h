@@ -13,9 +13,8 @@ struct WebResponse {
     std::string contentType = "application/json; charset=utf-8";
 };
 
-// 工具结果是否像失败：协议层没有 is_error 时（结果被框架以文本回填），靠文本兜底
-// （403 / Error: / Failed to / 超时 / 限流 …）。Web UI 高亮与 meta.json 的失败计数共用。
-bool toolResultLooksFailed(const std::string& result);
+// 失败工具计数：ToolExec.errorKind 非 none 即计入（分级判定在 chain/superstep）。
+// Web UI 高亮与 meta.json 的失败计数共用。
 int countFailedTools(const Run& run);
 
 WebResponse webUiPage();

@@ -145,7 +145,7 @@ std::string toMermaid(const Run& run, const MermaidOptions& opts) {
             out += "    " + id + "{\"" + escapeMermaidLabel(label) + "\"}\n";
             out += "    " + b.id + " --> " + id + "\n";
             if (!nextId.empty()) out += "    " + id + " --> " + nextId + "\n";
-            if (te.isError) {
+            if (te.errorKind != "none" && !te.errorKind.empty()) {
                 anyFail = true;
                 out += "    class " + id + " fail\n";
             }

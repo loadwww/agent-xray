@@ -148,8 +148,8 @@ void from_json(const nlohmann::json& j, LLMResponse& r) {
 
 // ---------- ToolExec ----------
 void to_json(nlohmann::json& j, const ToolExec& t) {
-    j = nlohmann::json{{"call_id", t.callId}, {"name", t.name},         {"arguments", t.arguments},
-                       {"result", t.result},  {"is_error", t.isError},   {"duration_ms", t.durationMs},
+    j = nlohmann::json{{"call_id", t.callId}, {"name", t.name},           {"arguments", t.arguments},
+                       {"result", t.result},  {"error_kind", t.errorKind}, {"duration_ms", t.durationMs},
                        {"approx", t.approx}};
 }
 void from_json(const nlohmann::json& j, ToolExec& t) {
@@ -157,7 +157,10 @@ void from_json(const nlohmann::json& j, ToolExec& t) {
     t.name = strOr(j, "name");
     t.arguments = strOr(j, "arguments");
     t.result = strOr(j, "result");
-    t.isError = valueOr<bool>(j, "is_error", false);
+    t.errorKind = strOr(j, "error_kind", "");
+    // 旧 run.json 只有布尔 is_error：true 视为协议层确认，false 为未发现
+    if (t.errorKind.empty()) t.errorKind = valueOr<bool>(j, "is_error", false) ? "confirmed" : "none";
+    if (t.errorKind != "none" && t.errorKind != "inferred" && t.errorKind != "confirmed") t.errorKind = "none";
     t.durationMs = valueOr<int>(j, "duration_ms", 0);
     t.approx = valueOr<bool>(j, "approx", true);
 }

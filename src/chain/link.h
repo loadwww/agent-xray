@@ -11,6 +11,8 @@ struct ChainOptions {
     int runGapMinutes = 30;
     double fuzzyThreshold = 0.90;
     int fuzzyWindow = 20;
+    // 工具失败文本词表（proxy.tool_error_patterns）；非空时覆盖内置词表
+    std::vector<std::string> toolErrorPatterns;
 };
 
 struct Link {

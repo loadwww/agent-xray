@@ -66,9 +66,10 @@ cmake --build build -j
 
 ## 为什么实用
 
-- **一眼定位失败**：工具结果带 `Error` / `403` / `Forbidden` / `Failed to` / `too much output` 等特征时
-  自动标红（协议层没有 `is_error` 时按文本判断）；受挫的 Step 边框变红并标注「受阻」，顶部横幅给出
-  失败总数与最早出现的 Step，侧栏该 run 带「N 失败」徽标。
+- **一眼定位失败**：协议层 `is_error` 或结果 JSON 带 `error` 字段 → 红色「失败」；结果文本命中
+  `Error` / `403` / `Forbidden` / `Failed to` / `too much output` 等特征 → 琥珀色「疑似失败」
+  （词表可用 `proxy.tool_error_patterns` 覆盖）。受挫的 Step 按同色标注，顶部横幅给出失败总数与
+  最早出现的 Step，侧栏该 run 带「N 失败」徽标。
 - **跑的时候就能看**：采集中的 run 每 3 秒刷新，直接读 `events.jsonl` 现建链，长任务不用等结束。
 - **两种视角**：默认看完整图（工具分支全展开）；一键折叠只看主模型思考链路；顶部甘特图给出总耗时、
   每步 LLM 时间片、同名工具合并后的并行条与步骤间隙，并行 / 串行 / 卡点一目了然。
@@ -148,6 +149,10 @@ proxy:
       name: "ollama"
 
   inject_usage: true      # 给流式请求补 stream_options.include_usage，否则拿不到 token
+
+  tool_error_patterns:    # 工具失败文本词表（不配置则用内置词表；配置后整体覆盖）
+    - "error:"
+    - "permission denied"
 ```
 
 `model_map` 命中后日志会打印 `模型名改写: gpt-4o -> deepseek-chat`，落盘记录的是真实发给上游的请求体。
@@ -159,7 +164,9 @@ proxy:
   （Responses API、Anthropic `/v1/messages`、embeddings、models 列表等）**不还原、也不进统计**，
   但原始流量不丢：仍完整保存在 `events.jsonl`，并在 `meta.json` 计入 `unsupported_requests`
   （同时置 `parse_degraded: true`），Web UI 顶部会提示未还原的条数。
-- 工具失败是**文本启发式**判断（协议层没有 `is_error`），个别措辞可能漏标；详情页能看到原始结果自行确认。
+- 工具失败分两级：协议层 `is_error` 或结果 JSON 明确报错为**确认失败**（红），其余按文本启发式判为
+  **疑似失败**（琥珀），个别措辞可能漏标或误判；详情页能看到原始结果自行确认，词表可配
+  `proxy.tool_error_patterns`。
 - 用 `Observation:` 文本回填工具结果的框架（如 smolagents），能还原工具调用与扇出，但**结果内容**落在
   下一条消息正文里，工具表的结果会显示 `-`。
 - 并行子 agent 交错写同一 messages 链时，分支归属可能误判；建议把可疑分支拆成独立 run。
