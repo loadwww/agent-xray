@@ -32,13 +32,13 @@ jobs:
           tar -czf dist/axr-linux-x86_64.tar.gz -C dist axr LICENSE README.md
       - name: 干净容器验收（ubuntu:24.04，验证 glibc / libcurl 依赖）
         run: |
-          docker run --rm -v "$PWD/dist:/dist:ro" ubuntu:24.04 bash -c '
+          docker run --rm -v "$PWD/dist:/dist:ro" -v "$PWD/tests/fixtures:/fixtures:ro" ubuntu:24.04 bash -c '
             set -eux
             apt-get update -qq
             apt-get install -y -qq --no-install-recommends ca-certificates libcurl4
             mkdir -p /tmp/x && tar -xzf /dist/axr-linux-x86_64.tar.gz -C /tmp/x
             /tmp/x/axr version
-            /tmp/x/axr selftest
+            /tmp/x/axr selftest --fixtures /fixtures
             /tmp/x/axr demo --diff
           '
       - uses: actions/upload-artifact@v4

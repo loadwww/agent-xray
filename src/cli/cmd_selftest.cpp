@@ -140,6 +140,8 @@ void testModelRoundtrip(TestCtx& t) {
 
 void testFixture(const std::string& dir, const std::string& name, TestCtx& t,
                  const std::function<void(const ChainResult&)>& assertions) {
+    // 发布二进制不带 fixtures：静默跳过，由 cmdSelftest 开头的提示统一说明
+    if (!std::filesystem::exists(dir + "/" + name)) return;
     auto chain = buildChainFromEvents(dir + "/" + name);
     if (!chain.ok()) {
         t.check(false, name + " 可加载: " + chain.err);
@@ -798,7 +800,7 @@ void testM4Units(TestCtx& t, const std::string& fixturesDir) {
     t.check(timeFromDirName("bad-name").empty(), "M4 非法目录名不推导");
 
     // ---- 性能：50 步链的建链耗时 < 100ms（§10 M4）----
-    {
+    if (std::filesystem::exists(fixturesDir + "/t12_long_chain")) {
         const auto t0 = std::chrono::steady_clock::now();
         auto chain = buildChainFromEvents(fixturesDir + "/t12_long_chain");
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
@@ -839,41 +841,45 @@ void testWebUi(TestCtx& t, const std::string& fixturesDir) {
 
     const std::filesystem::path tmp =
         std::filesystem::temp_directory_path() / ("axr-webui-" + makeSessionId());
-    const std::filesystem::path runDir = tmp / "runs" / "20261030-120000-abcd";
-    std::filesystem::create_directories(runDir);
-    std::filesystem::copy_file(fixturesDir + "/t2_single_tool/events.jsonl", runDir / "events.jsonl");
 
     Config cfg = defaultConfig();
     cfg.storage.root = tmp.string();
 
-    auto runs = webUiRuns(cfg);
-    t.check(runs.status == 200, "UI runs 接口 200");
-    auto list = nlohmann::json::parse(runs.body, nullptr, false);
-    t.check(list.is_array() && list.size() == 1, "UI runs 列出 1 个 run");
-    if (list.is_array() && !list.empty()) t.check(list[0]["id"] == "20261030-120000-abcd", "UI runs id 正确");
+    // 依赖 t2 fixture 的 runs 列表 / run 明细检查：发布二进制不带 fixtures，跳过
+    if (std::filesystem::exists(fixturesDir + "/t2_single_tool/events.jsonl")) {
+        const std::filesystem::path runDir = tmp / "runs" / "20261030-120000-abcd";
+        std::filesystem::create_directories(runDir);
+        std::filesystem::copy_file(fixturesDir + "/t2_single_tool/events.jsonl", runDir / "events.jsonl");
 
-    auto detail = webUiRun(cfg, "20261030-120000-abcd", "");
-    t.check(detail.status == 200, "UI run 明细 200");
-    auto d = nlohmann::json::parse(detail.body, nullptr, false);
-    t.check(d.is_object() && d.contains("steps") && d["steps"].is_array(), "UI run 明细含 steps");
-    t.check(d.contains("mermaid") && d["mermaid"].get<std::string>().find("flowchart") != std::string::npos,
-            "UI run 明细含 mermaid 源码");
-    t.check(d.contains("total") && d["total"]["tokens"].get<int>() > 0, "UI run 明细含 token 汇总");
-    t.check(d.contains("total") && d["total"]["observed"].get<bool>(), "UI 汇总标记 usage 已观测");
-    t.check(d.contains("steps") && d["steps"][0]["tokensObserved"].get<bool>(), "UI 步骤标记 usage 已观测");
-    t.check(d.contains("failTools") && d["failTools"].get<int>() == 0, "UI run 明细含失败工具计数");
-    t.check(d.contains("collapseThreshold"), "UI run 明细带折叠阈值");
+        auto runs = webUiRuns(cfg);
+        t.check(runs.status == 200, "UI runs 接口 200");
+        auto list = nlohmann::json::parse(runs.body, nullptr, false);
+        t.check(list.is_array() && list.size() == 1, "UI runs 列出 1 个 run");
+        if (list.is_array() && !list.empty()) t.check(list[0]["id"] == "20261030-120000-abcd", "UI runs id 正确");
+
+        auto detail = webUiRun(cfg, "20261030-120000-abcd", "");
+        t.check(detail.status == 200, "UI run 明细 200");
+        auto d = nlohmann::json::parse(detail.body, nullptr, false);
+        t.check(d.is_object() && d.contains("steps") && d["steps"].is_array(), "UI run 明细含 steps");
+        t.check(d.contains("mermaid") && d["mermaid"].get<std::string>().find("flowchart") != std::string::npos,
+                "UI run 明细含 mermaid 源码");
+        t.check(d.contains("total") && d["total"]["tokens"].get<int>() > 0, "UI run 明细含 token 汇总");
+        t.check(d.contains("total") && d["total"]["observed"].get<bool>(), "UI 汇总标记 usage 已观测");
+        t.check(d.contains("steps") && d["steps"][0]["tokensObserved"].get<bool>(), "UI 步骤标记 usage 已观测");
+        t.check(d.contains("failTools") && d["failTools"].get<int>() == 0, "UI run 明细含失败工具计数");
+        t.check(d.contains("collapseThreshold"), "UI run 明细带折叠阈值");
+
+        // 采集中（没有 meta.json）也要在侧栏给出真实数值
+        if (list.is_array() && !list.empty()) {
+            t.check(list[0]["live"].get<bool>(), "UI runs 标记采集中");
+            t.check(list[0]["steps"].get<int>() > 0, "UI runs 对未收尾 run 现算步数");
+            t.check(list[0]["status"].get<std::string>() == "采集中" ||
+                        list[0]["status"].get<std::string>() == "未收尾",
+                    "UI runs 未收尾 run 有明确状态");
+        }
+    }
     t.check(webUiPage().body.find("折叠工具调用") != std::string::npos, "UI 页面有折叠/展开工具按钮");
     t.check(webUiPage().body.find("时间线") != std::string::npos, "UI 页面有全局时间线（甘特图）");
-
-    // 采集中（没有 meta.json）也要在侧栏给出真实数值
-    if (list.is_array() && !list.empty()) {
-        t.check(list[0]["live"].get<bool>(), "UI runs 标记采集中");
-        t.check(list[0]["steps"].get<int>() > 0, "UI runs 对未收尾 run 现算步数");
-        t.check(list[0]["status"].get<std::string>() == "采集中" ||
-                    list[0]["status"].get<std::string>() == "未收尾",
-                "UI runs 未收尾 run 有明确状态");
-    }
 
     // 失败工具高亮：上游没标 is_error，但结果文本里有 403 → 也要标红
     {
@@ -982,6 +988,8 @@ int cmdSelftest(const std::vector<std::string>& args) {
     TestCtx t;
     const std::string dir = fixtureDir(args);
     std::cout << "fixtures: " << dir << "\n";
+    if (!std::filesystem::is_directory(dir))
+        std::cout << "fixtures 不存在：跳过依赖夹具的用例（在开发仓库根目录运行才会执行全部用例）\n";
 
     testHash(t);
     testModelRoundtrip(t);
@@ -1100,7 +1108,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     });
 
     // P0-2 多 run 输出：meta 登记全部 run、非主 run 落盘 run-<i>.json、CLI/UI 可按 id 访问
-    {
+    if (std::filesystem::exists(dir + "/t14_two_tasks_same_system/events.jsonl")) {
         namespace fs = std::filesystem;
         const fs::path tmp = fs::temp_directory_path() / ("axr-p02-" + makeSessionId());
         const fs::path sessionDir = tmp / "runs" / "20261030-150000-p02x";
@@ -1230,7 +1238,8 @@ int cmdSelftest(const std::vector<std::string>& args) {
         t.check(pairs.ok() && pairs.value.size() == 1, "P0-3 解析失败的请求仍留在链上");
         t.check(st.parseFailed == 1 && st.unsupportedRequests == 0, "P0-3 解析失败单独计数");
 
-        // 现有 fixture 不得被误过滤 / 误计数
+        // 现有 fixture 不得被误过滤 / 误计数（发布二进制无 fixtures，整段跳过）
+        if (std::filesystem::exists(dir + "/t15_mixed_endpoints/events.jsonl")) {
         auto chain14 = buildChainFromEvents(dir + "/t14_two_tasks_same_system");
         t.check(chain14.ok() && chain14.value.unsupportedRequests == 0 &&
                     chain14.value.parseFailed == 0 && chain14.value.truncatedEvents == 0,
@@ -1267,6 +1276,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
                 "P0-3 UI 明细带降级计数字段");
 
         fs::remove_all(tmp);
+        }
     }
 
     // 30 条请求的长链
@@ -1280,7 +1290,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     });
 
     // T7 模糊匹配：改写系统提示词导致前缀失配
-    {
+    if (std::filesystem::exists(dir + "/deepseek_tool_2")) {
         auto path = resolveEventsPath(dir + "/deepseek_tool_2");
         auto events = readEventsFile(path);
         if (events.ok()) {
@@ -1355,7 +1365,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     });
 
     // report.md：概览 / 流程图 / 时间线 / 工具表 / Token 用量表 / 缺失警告
-    {
+    if (std::filesystem::exists(dir + "/t5_missing")) {
         auto chain = buildChainFromEvents(dir + "/t5_missing");
         if (chain.ok() && !chain.value.runs.empty()) {
             const Run& r = chain.value.runs[0];
@@ -1376,7 +1386,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     }
 
     // M4 diff fixture：base 5 步 / cur 6 步，且 T3 参数与结果不同
-    {
+    if (std::filesystem::exists(dir + "/t13_diff_base")) {
         auto baseChain = buildChainFromEvents(dir + "/t13_diff_base");
         auto curChain = buildChainFromEvents(dir + "/t13_diff_cur");
         if (baseChain.ok() && curChain.ok() && primaryRun(baseChain.value) && primaryRun(curChain.value)) {
