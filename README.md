@@ -49,7 +49,8 @@ Start-Process axr -ArgumentList 'serve','--listen','8080' -WorkingDirectory D:\a
 ```
 
 长时间挂机时，当前会话空闲超过 `storage.idle_finalize_minutes`（默认 10 分钟）会自动收尾成
-run 产物并开一个新会话，避免单个 `events.jsonl` 无限增长。
+run 产物并开一个新会话，避免单个 `events.jsonl` 无限增长。启动时还会按 `storage.retention_days`
+自动清理过期 run（<=0 关闭），手动执行用 `axr prune --auto`。
 
 `config.yaml` 默认从**当前目录**读取；不在仓库目录时用 `--config D:\agent-xray\config.yaml`
 （否则会静默使用内置默认上游，你的 `model_map` 等配置不生效）。
@@ -105,6 +106,7 @@ axr list --root <root> [--json]                # 列出所有 run（steps / tool
 axr export --root <root> <runID> --format mermaid  # 导出流程图（json 则导出完整 Run）
 axr diff <runA> <runB>                         # 按 Step 对齐比较两次运行
 axr prune --days 7 --root <root> [--apply]     # 清理旧 run（默认 dry-run）
+axr prune --auto --root <root>                 # 按 storage.retention_days 自动清理（serve 启动时同策略）
 ```
 
 `<root>` 默认是 `%USERPROFILE%\.xray`，每个 run 一个目录：

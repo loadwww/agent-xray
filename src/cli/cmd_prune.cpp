@@ -14,6 +14,7 @@ namespace {
 struct PruneOpts {
     int days = -1;
     bool apply = false;
+    bool autoMode = false;
     ProxyCliOpts cfgOpts;
 };
 
@@ -28,6 +29,8 @@ Status parsePruneArgs(const std::vector<std::string>& args, PruneOpts& out) {
             }
         } else if (a == "--apply") {
             out.apply = true;
+        } else if (a == "--auto") {
+            out.autoMode = true;
         } else if (a == "--config" && i + 1 < args.size()) {
             out.cfgOpts.configPath = args[++i];
         } else if (a == "--root" && i + 1 < args.size()) {
@@ -38,7 +41,8 @@ Status parsePruneArgs(const std::vector<std::string>& args, PruneOpts& out) {
             return Status::Fail("多余参数: " + a);
         }
     }
-    if (out.days < 0) return Status::Fail("需要 --days（例如 axr prune --days 7）");
+    if (!out.autoMode && out.days < 0)
+        return Status::Fail("需要 --days（例如 axr prune --days 7），或用 --auto 读取 retention_days");
     return Status::Ok();
 }
 
@@ -54,7 +58,7 @@ int cmdPrune(const std::vector<std::string>& args) {
     PruneOpts opts;
     Status st = parsePruneArgs(args, opts);
     if (!st.ok()) {
-        std::cerr << st.err << "\n用法: axr prune --days N [--apply] [--root dir] [--config config.yaml]\n";
+        std::cerr << st.err << "\n用法: axr prune --days N [--apply] | --auto [--root dir] [--config config.yaml]\n";
         return 2;
     }
 
@@ -62,6 +66,16 @@ int cmdPrune(const std::vector<std::string>& args) {
     if (!cfg.ok()) {
         std::cerr << cfg.err << "\n";
         return 1;
+    }
+
+    // P2-16：--auto 直接沿用 storage.retention_days 并自动执行（serve 启动时也走同一策略）
+    if (opts.autoMode) {
+        if (opts.days < 0) opts.days = cfg.value.storage.retentionDays;
+        opts.apply = true;
+        if (opts.days <= 0) {
+            std::cerr << "retention_days <= 0，自动清理已关闭\n";
+            return 1;
+        }
     }
 
     auto outcome = pruneRuns(cfg.value.storage.root, opts.days, opts.apply);

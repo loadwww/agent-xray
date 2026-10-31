@@ -14,6 +14,7 @@
 #include "proxy/server.h"
 #include "store/finalize.h"
 #include "store/run_dir.h"
+#include "store/run_index.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -166,6 +167,17 @@ int cmdServe(const std::vector<std::string>& args) {
     if (!bindOk.ok()) {
         logError("serve", bindOk.err);
         return 2;
+    }
+
+    // P2-16：启动时按 retention_days 清一次旧 run（<=0 关闭自动清理）
+    if (cfg.value.storage.retentionDays > 0) {
+        auto pruned = pruneRuns(cfg.value.storage.root, cfg.value.storage.retentionDays, true);
+        if (!pruned.ok()) {
+            logWarn("serve", "启动清理失败: " + pruned.err);
+        } else if (pruned.value.removed > 0) {
+            logInfo("serve", "启动清理: 已删除 " + std::to_string(pruned.value.removed) + " 个旧 run（mtime >= " +
+                                  std::to_string(cfg.value.storage.retentionDays) + " 天）");
+        }
     }
 
     ReverseProxySource source(cfg.value);

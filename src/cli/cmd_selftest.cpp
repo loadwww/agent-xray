@@ -8,6 +8,7 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <sstream>
 
 #include "chain/fuzzy.h"
 #include "chain/link.h"
@@ -551,6 +552,51 @@ void testLiveIncremental(TestCtx& t) {
     fs::remove_all(tmp);
 }
 
+// P2-16 retention 自动执行：--auto 读取 retention_days 并直接 apply；serve 启动复用同一策略
+void testAutoPrune(TestCtx& t) {
+    auto cf = parseConfigText("storage:\n  retention_days: 30\n");
+    t.check(cf.ok() && cf.value.storage.retentionDays == 30, "P2-16 retention_days 可配置");
+    t.check(defaultConfig().storage.retentionDays == 30, "P2-16 retention_days 默认 30");
+
+    namespace fs = std::filesystem;
+    const fs::path tmp = fs::temp_directory_path() / ("axr-p16-" + makeSessionId());
+    fs::create_directories(tmp);
+    const fs::path runs = tmp / "runs";
+    const fs::path oldRun = runs / "20260901-090000-aaaa";
+    const fs::path newRun = runs / "20261030-090000-bbbb";
+    fs::create_directories(oldRun);
+    fs::create_directories(newRun);
+    writeTextFile((oldRun / "meta.json").string(),
+                  R"({"id":"20260901-090000-aaaa","started_at":"2026-09-01T09:00:00.000+08:00","status":"complete","step_count":2})");
+    fs::last_write_time(oldRun, fs::file_time_type::clock::now() - std::chrono::hours(24 * 40));
+
+    const fs::path cfg30 = tmp / "prune.yaml";
+    writeTextFile(cfg30.string(), "storage:\n  retention_days: 30\n");
+
+    std::ostringstream out;
+    std::streambuf* oldBuf = std::cout.rdbuf(out.rdbuf());
+    const int rc = cmdPrune({"--auto", "--root", tmp.string(), "--config", cfg30.string()});
+    std::cout.rdbuf(oldBuf);
+
+    t.check(rc == 0, "P2-16 prune --auto 执行成功");
+    t.check(!fs::exists(oldRun), "P2-16 prune --auto 删除过期 run");
+    t.check(fs::exists(newRun), "P2-16 prune --auto 保留未过期 run");
+    t.check(out.str().find("已删除 1 个 run") != std::string::npos,
+            "P2-16 prune --auto 直接执行而非 dry-run");
+
+    // retention_days <= 0 视为关闭自动清理
+    const fs::path cfgOff = tmp / "prune-off.yaml";
+    writeTextFile(cfgOff.string(), "storage:\n  retention_days: 0\n");
+    std::ostringstream err;
+    std::streambuf* oldErr = std::cerr.rdbuf(err.rdbuf());
+    const int rcOff = cmdPrune({"--auto", "--root", tmp.string(), "--config", cfgOff.string()});
+    std::cerr.rdbuf(oldErr);
+    t.check(rcOff == 1 && err.str().find("自动清理已关闭") != std::string::npos,
+            "P2-16 retention_days<=0 时 --auto 拒绝执行");
+
+    fs::remove_all(tmp);
+}
+
 // 统计 Mermaid 里的节点定义行（S*/Sc* 矩形与 T* 菱形）
 int mermaidNodeCount(const std::string& mmd) {
     int n = 0;
@@ -824,6 +870,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     testCapturePrivacy(t);
     testTruncatedSkipParse(t);
     testLiveIncremental(t);
+    testAutoPrune(t);
 
     // T1 普通对话
     testFixture(dir, "t1_simple", t, [&](const ChainResult& cr) {
