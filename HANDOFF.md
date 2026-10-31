@@ -2,7 +2,7 @@
 
 > 本文供下一个对话接手。第一批（P0-1 → P0-2 → P0-3 → P1-5 的 1、2 两条）、第二批
 > （P1-4 → P1-5 的 3、4 两条 → P1-6）与第三批（P2-7 ~ P2-12）均已完成，所有改动已 push 到
-> `origin/master`，CI 双平台绿。第四批（P2-13 ~ P2-16）进行中。
+> `origin/master`，CI 双平台绿。第四批（P2-13 ~ P2-16）已完成。
 
 ## 一、基线与环境
 
@@ -178,6 +178,16 @@ cmake --build build -j
   Step 增长且 run id 稳定、半行 pending）
 - 验收：Windows selftest 286 全过；WSL Linux selftest 287 全过
 
+### P2-16 retention 自动执行 — commit `d9dcc74`
+- `cli/cmd_serve.cpp`：启动时若 `storage.retention_days > 0` 调 `pruneRuns(root, days, true)`；
+  有删除时 logInfo 删除数，失败 logWarn；<=0 跳过
+- `cli/cmd_prune.cpp`：新增 `--auto`，未显式给 `--days` 时取 `storage.retention_days`，自动 apply；
+  `retention_days <= 0` 直接报错退出，避免误删
+- README 常用命令与 serve 说明补充 `axr prune --auto`
+- selftest：新增 `testAutoPrune`（默认/可配置 retention、临时目录 `cmdPrune --auto` 删除过期 run
+  且保留未过期 run、retention<=0 拒绝执行）
+- 验收：Windows selftest 293 全过；WSL Linux selftest 294 全过
+
 ## 三、关键代码事实（供下一个对话快速定位）
 
 - 转发层平台实现：`src/proxy/forward_winhttp.cpp`（`#ifdef _WIN32`）+ `src/proxy/forward_curl.cpp`（其它平台，libcurl）
@@ -195,7 +205,7 @@ cmake --build build -j
 
 ### 第三批（P2-7 ~ P2-12 低成本准确性）— 已完成（见第二节）
 
-> P2-7、P2-8、P2-9、P2-10、P2-11、P2-12 均已完成；下一批从第四批开始。
+> P2-7、P2-8、P2-9、P2-10、P2-11、P2-12 均已完成；第四批 P2-13 ~ P2-16 也已完成。
 
 ### 第四批（P2-13 ~ P2-16 隐私/性能/运维）
 - **P2-13 采集模式与隐私**：`proxy.capture: full|summary`（summary 只存长度+sha256 前16位）；脱敏正则加 Bearer/api_key/x-api-key；run 目录 0700；非回环 bind 需 `--allow-remote`
@@ -219,7 +229,7 @@ cmake --build build -j
 - [x] inject_usage 默认开且自动降级；OLLAMA_HOST 修正（P2-8 / P2-12）
 - [x] run id 防撞（P2-10）
 - [x] 截断事件不参与解析（P2-14）
-- [ ] summary 采集模式；retention 自动执行；UI 增量刷新（P2-13 / P2-15 / P2-16）
+- [x] summary 采集模式；retention 自动执行；UI 增量刷新（P2-13 / P2-15 / P2-16）
 - [x] 设计文档降级为历史文档，架构文档与实现一致（P1-6）
 
 ## 六、已知坑与注意事项
