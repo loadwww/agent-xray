@@ -12,7 +12,7 @@
 namespace axr {
 namespace {
 
-const char* kVersion = "0.3.1";
+const char* kVersion = "0.4.0";
 
 void printUsage() {
     std::cout << "AgentXray " << kVersion << "\n\n"
@@ -24,7 +24,7 @@ void printUsage() {
               << "  axr report <run目录|events.jsonl|runID> [--out file] [--config config.yaml]\n"
               << "  axr export <run目录|events.jsonl|runID> --format mermaid|json [--out file]\n"
               << "  axr diff <base> <cur> [--config config.yaml] [--root dir]\n"
-              << "  axr prune --days N [--apply] [--root dir]\n"
+              << "  axr prune --days N [--apply] | --auto [--root dir] [--config config.yaml]\n"
               << "  axr replay <run目录|events.jsonl> [--format mermaid|json|text] [--out file]\n"
               << "  axr selftest [--fixtures <dir>]\n"
               << "  axr version\n";

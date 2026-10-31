@@ -199,6 +199,12 @@ proxy:
   `axr serve --local ollama` 自动把 `/v1` 指向 `http://127.0.0.1:11434/v1` 并跳过 API key 校验；
   本地服务不回 `usage` 时先补 `stream_options.include_usage`，仍拿不到就把 token 标为「未观测」，不估算。
 
+## 版本与更新
+
+当前版本 `v0.4.0`。Windows 单文件 `axr.exe` 随
+[Releases](https://github.com/loadwww/agent-xray/releases) 发布；安装脚本总是拉取 latest，
+`axr version` 可查看本地版本。本次更新集中在「数据准确性、隐私与长期运行」，详见 Release 说明。
+
 ## 许可证
 
 [MIT](LICENSE) © 2026 loadwww
