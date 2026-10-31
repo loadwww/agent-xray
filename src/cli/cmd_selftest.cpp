@@ -444,6 +444,47 @@ void testCapturePrivacy(TestCtx& t) {
 #endif
 }
 
+// P2-14 截断事件不参与解析：req / resp 带 truncated 时跳过 parse，直接计入 parse_failed
+void testTruncatedSkipParse(TestCtx& t) {
+    RawEvent req;
+    req.kind = "req";
+    req.hop = "h-1";
+    req.upstream = "https://api.deepseek.com/v1/chat/completions";
+    req.reqBody = R"({"model":"m","messages":[{"role":"user","content":"hi"}]})";
+    req.truncated = true;
+
+    std::vector<RawEvent> evs = {req};
+    AssembleStats st;
+    auto pairs = assembleCalls(evs, &st);
+    t.check(pairs.ok() && pairs.value.size() == 1, "P2-14 截断请求仍保留 pair");
+    t.check(st.parseFailed == 1 && st.truncatedEvents == 1, "P2-14 截断请求计入 parse_failed");
+    t.check(pairs.ok() && pairs.value[0].call.messages.empty(), "P2-14 截断请求不进入解析");
+    t.check(pairs.ok() && pairs.value[0].resp.err.find("截断") != std::string::npos,
+            "P2-14 截断请求留下可诊断错误");
+
+    RawEvent good = req;
+    good.truncated = false;
+    RawEvent resp;
+    resp.kind = "resp";
+    resp.hop = "h-1";
+    resp.status = 200;
+    resp.latencyMs = 100;
+    resp.respBody =
+        R"({"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],)"
+        R"("usage":{"prompt_tokens":1,"completion_tokens":1}})";
+    resp.truncated = true;
+
+    evs = {good, resp};
+    AssembleStats st2;
+    auto pairs2 = assembleCalls(evs, &st2);
+    t.check(pairs2.ok() && pairs2.value.size() == 1, "P2-14 截断响应仍保留 pair");
+    t.check(st2.parseFailed == 1 && st2.truncatedEvents == 1, "P2-14 截断响应计入 parse_failed");
+    t.check(pairs2.ok() && pairs2.value[0].resp.text.empty(), "P2-14 截断响应不解析正文");
+    t.check(pairs2.ok() && pairs2.value[0].resp.err.find("截断") != std::string::npos,
+            "P2-14 截断响应留下可诊断错误");
+    t.check(pairs2.ok() && pairs2.value[0].resp.latencyMs == 100, "P2-14 截断响应仍保留延迟");
+}
+
 // 统计 Mermaid 里的节点定义行（S*/Sc* 矩形与 T* 菱形）
 int mermaidNodeCount(const std::string& mmd) {
     int n = 0;
@@ -715,6 +756,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     testM4Units(t, dir);
     testWebUi(t, dir);
     testCapturePrivacy(t);
+    testTruncatedSkipParse(t);
 
     // T1 普通对话
     testFixture(dir, "t1_simple", t, [&](const ChainResult& cr) {
@@ -900,7 +942,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
         t.check(cr.runs.size() == 1, "T15 runs 只由 chat/completions 组成（1 个 run）");
         t.check(cr.unsupportedRequests == 2, "T15 responses/embeddings 计入 unsupported_requests");
         t.check(cr.truncatedEvents == 1, "T15 truncated 事件单独计数");
-        t.check(cr.parseFailed == 0, "T15 无解析失败");
+        t.check(cr.parseFailed == 1, "T15 截断响应不再解析，计入 parse_failed");
         if (cr.runs.empty()) return;
         const Run& r = cr.runs[0];
         t.check(r.steps.size() == 2, "T15 2 Step（本机 11434 上游也算 chat/completions）");
@@ -964,6 +1006,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
         }
         t.check(meta.value("unsupported_requests", 0) == 2, "P0-3 meta.unsupported_requests == 2");
         t.check(meta.value("truncated_events", 0) == 1, "P0-3 meta.truncated_events == 1");
+        t.check(meta.value("parse_failed", 0) == 1, "P0-3 截断响应计入 meta.parse_failed");
         t.check(meta.value("parse_degraded", false), "P0-3 meta.parse_degraded 置真");
 
         auto d3 = webUiRun(cfg, "20261030-150000-p03x", "");

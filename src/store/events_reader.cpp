@@ -100,6 +100,16 @@ Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events,
             p.pair.call.startedAt = e.ts;
             p.lastTs = e.ts;
 
+            // P2-14：被截断的请求体不参与解析（截断必然破坏 JSON / 消息链），
+            // 直接计入 parseFailed；pair 仍保留，链上能看到这条失败请求
+            if (e.truncated) {
+                if (stats) ++stats->parseFailed;
+                p.pair.resp.err = "req_body 被截断，无法解析";
+                pendings[e.hop] = std::move(p);
+                order.push_back(e.hop);
+                continue;
+            }
+
             nlohmann::json body;
             try {
                 body = nlohmann::json::parse(e.reqBody);
@@ -141,7 +151,12 @@ Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events,
             p.pair.resp.streamed = true;
             p.hasResp = true;
         } else if (e.kind == "resp") {
-            if (!p.stream) {
+            if (e.truncated && !p.stream) {
+                // P2-14：截断的非流式响应不解析正文，计入 parseFailed；延迟 / 状态照常保留
+                if (stats) ++stats->parseFailed;
+                p.pair.resp.err = "resp_body 被截断，无法解析";
+                p.pair.resp.callId = e.hop;
+            } else if (!p.stream) {
                 if (!e.respBody.empty()) {
                     nlohmann::json body;
                     try {

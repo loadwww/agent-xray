@@ -184,6 +184,8 @@ proxy:
 - `proxy.capture: summary` 只保留请求/响应正文的长度与 sha256 前缀，因此对应 run 无法还原
   消息内容（会计入 `parse_failed`），适合只想看调用规模 / 时间的隐私敏感场景。
 - `proxy.max_body_bytes` 超限的请求由 HTTP 层直接回 413，代理拿不到完整请求体，因此不产生事件（宁可少记也不占内存）。
+  上游响应正文超限时按截断保存（`truncated: true`）；截断的请求 / 响应不参与解析、计入
+  `parse_failed`，链上仍保留这次调用但内容不可用。
 
 ## 待办
 
