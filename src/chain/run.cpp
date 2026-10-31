@@ -170,6 +170,18 @@ ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts, con
             run.endedAt = pairs[s.back()].call.endedAt.empty() ? pairs[s.back()].call.startedAt
                                                                : pairs[s.back()].call.endedAt;
             run.incomplete = !validate(run, run.missing);
+            // WP3：请求正文不可解析（capture=summary 或 body 被截断）时，该 Step 的
+            // 消息链是空的，配套的 resp.err 会记录原因。Step 仍保留（能看到调用发生过、
+            // 时间与 token 规模），但整条 run 必须标记 incomplete，避免显示成“成功的空壳任务”
+            int unusableSteps = 0;
+            for (const auto& st : run.steps) {
+                if (st.call.messages.empty() && !st.response.err.empty()) ++unusableSteps;
+            }
+            if (unusableSteps > 0) {
+                run.incomplete = true;
+                run.missing.push_back(std::to_string(unusableSteps) +
+                                      " 条请求正文不可解析（capture=summary 或截断），对应步骤内容不可用");
+            }
             const std::size_t runIdx = result.runs.size();
             for (int idx : s) callToRun[idx] = runIdx;
             result.runs.push_back(std::move(run));

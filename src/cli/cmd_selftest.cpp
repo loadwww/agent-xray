@@ -486,6 +486,54 @@ void testTruncatedSkipParse(TestCtx& t) {
     t.check(pairs2.ok() && pairs2.value[0].resp.latencyMs == 100, "P2-14 截断响应仍保留延迟");
 }
 
+// WP3：请求正文不可解析（capture=summary / 截断）时 run 必须标记 incomplete，
+// 但 Step 仍保留，能看出调用发生过与时间信息
+void testParseFailureStatus(TestCtx& t) {
+    RawEvent req;
+    req.kind = "req";
+    req.hop = "h-1";
+    req.upstream = "https://api.deepseek.com/v1/chat/completions";
+    req.reqBody = "[capture:summary size=1234 sha256=abcd1234abcd1234]";
+    req.ts = "2026-10-30T10:00:00.000+08:00";
+
+    RawEvent resp;
+    resp.kind = "resp";
+    resp.hop = "h-1";
+    resp.status = 200;
+    resp.latencyMs = 120;
+    resp.ts = "2026-10-30T10:00:01.000+08:00";
+    resp.respBody =
+        R"({"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],)"
+        R"("usage":{"prompt_tokens":10,"completion_tokens":2}})";
+
+    auto cr = buildChainFromRawEvents({req, resp});
+    t.check(cr.ok() && cr.value.runs.size() == 1, "WP3 summary 请求仍切出 1 个 run");
+    if (!cr.ok() || cr.value.runs.empty()) return;
+    const Run& r = cr.value.runs[0];
+    t.check(r.steps.size() == 1, "WP3 summary 模式的 Step 仍保留");
+    t.check(r.steps[0].call.messages.empty(), "WP3 summary 模式 Step 无消息链");
+    t.check(r.incomplete, "WP3 summary 模式 run 标记 incomplete");
+    bool hasNote = false;
+    for (const auto& m : r.missing)
+        if (m.find("请求正文不可解析") != std::string::npos) hasNote = true;
+    t.check(hasNote, "WP3 missing 含正文不可解析文案");
+
+    // 截断请求同样不可用 → incomplete
+    RawEvent truncReq = req;
+    truncReq.truncated = true;
+    truncReq.reqBody = R"({"model":"m","messages":[{"role":"user","content":"hi"}]})";
+    auto cr2 = buildChainFromRawEvents({truncReq, resp});
+    t.check(cr2.ok() && !cr2.value.runs.empty() && cr2.value.runs[0].incomplete,
+            "WP3 截断请求的 run 标记 incomplete");
+
+    // 正常 full 模式不受影响
+    RawEvent fullReq = req;
+    fullReq.reqBody = R"({"model":"m","messages":[{"role":"user","content":"hi"}]})";
+    auto cr3 = buildChainFromRawEvents({fullReq, resp});
+    t.check(cr3.ok() && !cr3.value.runs.empty() && !cr3.value.runs[0].incomplete,
+            "WP3 正常 full 模式 run 仍为 complete");
+}
+
 // P2-15 增量读取 + 空闲收尾配置：只续读新字节、尾行不完整先不解析、重建后 run id 稳定
 void testLiveIncremental(TestCtx& t) {
     auto on = parseConfigText("storage:\n  idle_finalize_minutes: 10\n");
@@ -869,6 +917,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     testWebUi(t, dir);
     testCapturePrivacy(t);
     testTruncatedSkipParse(t);
+    testParseFailureStatus(t);
     testLiveIncremental(t);
     testAutoPrune(t);
 
