@@ -47,6 +47,19 @@ jobs:
         run: ./build/axr selftest
       - name: e2e（含 WP5 SIGINT 优雅退出 / WP6 懒建会话）
         run: bash tests/e2e_proxy.sh
+      - name: install.sh 自检（本地包 + 无 sudo 安装）
+        run: |
+          set -eux
+          mkdir -p /tmp/pkg
+          cp build/axr LICENSE README.md /tmp/pkg/
+          tar -czf /tmp/pkg/axr-linux-x86_64.tar.gz -C /tmp/pkg axr LICENSE README.md
+          (cd /tmp/pkg && sha256sum axr-linux-x86_64.tar.gz > SHA256SUMS)
+          python3 -m http.server 8123 --directory /tmp/pkg >/dev/null 2>&1 &
+          sleep 1
+          AXR_BASE_URL=http://127.0.0.1:8123 AXR_INSTALL_DIR=/tmp/axr-bin sh scripts/install.sh
+          /tmp/axr-bin/axr version
+          /tmp/axr-bin/axr demo --diff > /tmp/demo.txt
+          head -3 /tmp/demo.txt
       - name: 上传 e2e 产物（失败时）
         if: failure()
         uses: actions/upload-artifact@v4

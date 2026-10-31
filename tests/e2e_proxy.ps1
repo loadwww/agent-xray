@@ -252,6 +252,15 @@ Check ($demoOut -match "工具差异") "demo --diff 输出包含工具差异"
 $demoLeft = @(Get-ChildItem $env:TEMP -Filter "axr-demo-*" -ErrorAction SilentlyContinue)
 Check ($demoLeft.Count -eq 0) "demo --diff 退出后无临时目录残留（实际 $($demoLeft.Count)）"
 
+# A4：容器里要监听 0.0.0.0，但必须显式 --allow-remote
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'   # 预期 stderr 的拒绝提示，不能触发 Stop
+$bindOut = & $axr demo --bind 0.0.0.0 --no-open --port 8792 2>&1 | Out-String
+$bindRc = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
+Check ($bindRc -ne 0) "demo 非回环 bind 未加 --allow-remote 被拒绝（码 $bindRc）"
+Check ($bindOut -match "allow-remote") "拒绝提示里给出 --allow-remote"
+
 if ($script:failures.Count -gt 0) {
     Write-Host "`n结果: $($script:failures.Count) 项失败"
     exit 1

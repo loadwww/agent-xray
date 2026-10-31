@@ -1,4 +1,5 @@
 #include "cli/cli.h"
+#include "cli/cli_common.h"
 
 #include <algorithm>
 #include <atomic>
@@ -47,6 +48,8 @@ void onDemoSignal(int) { g_demoStopSig = 1; }
 
 struct DemoOpts {
     int port = 8787;
+    std::string bind = "127.0.0.1";
+    bool allowRemote = false;
     bool noOpen = false;
     bool wantDiff = false;
 };
@@ -255,8 +258,14 @@ int demoServe(const std::filesystem::path& root, const DemoOpts& opts) {
     cfg.storage.root = root.string();
     cfg.storage.retentionDays = 0;       // 不清理示例
     cfg.storage.idleFinalizeMinutes = 0; // 不轮转
-    cfg.proxy.bind = "127.0.0.1";
+    cfg.proxy.bind = opts.bind;
     cfg.proxy.listen = opts.port;
+
+    const Status bindStatus = enforceBindPolicy(cfg, opts.allowRemote);
+    if (!bindStatus.ok()) {
+        std::cerr << "错误: " << bindStatus.err << "\n";
+        return 1;
+    }
 
     ReverseProxySource source(cfg);
 #ifdef _WIN32
@@ -267,11 +276,11 @@ int demoServe(const std::filesystem::path& root, const DemoOpts& opts) {
 #endif
 
     if (!source.start([](const Event&) {})) {
-        std::cerr << "错误: 无法在 127.0.0.1:" << opts.port << " 上启动页面（端口被占用？换 --port 试试）\n";
+        std::cerr << "错误: 无法在 " << opts.bind << ":" << opts.port << " 上启动页面（端口被占用？换 --port 试试）\n";
         return 1;
     }
 
-    const std::string base = "http://127.0.0.1:" + std::to_string(opts.port);
+    const std::string base = "http://" + opts.bind + ":" + std::to_string(opts.port);
     std::cout << "AgentXray 演示（离线运行，无需 API key，示例数据只在临时目录）\n"
               << "  临时目录: " << root.string() << "\n"
               << "  页面: " << base << "/__xray\n"
@@ -299,16 +308,22 @@ int cmdDemo(const std::vector<std::string>& args) {
     for (std::size_t i = 0; i < args.size(); ++i) {
         const std::string& a = args[i];
         if (a == "--help" || a == "-h") {
-            std::cout << "用法: axr demo [--port 8787] [--no-open] [--diff]\n\n"
+            std::cout << "用法: axr demo [--port 8787] [--bind 127.0.0.1] [--allow-remote] [--no-open] [--diff]\n\n"
                          "  释放内置的两次示例 run 到临时目录并打开 Web UI（离线，无需 API key）。\n"
-                         "  --no-open  不自动打开浏览器（CI / 服务器）\n"
-                         "  --diff     只打印两次示例 run 的差异后退出\n";
+                         "  --no-open       不自动打开浏览器（CI / 服务器）\n"
+                         "  --diff          只打印两次示例 run 的差异后退出\n"
+                         "  --bind          监听地址，默认 127.0.0.1；容器里用 0.0.0.0\n"
+                         "  --allow-remote  允许非回环 bind（暴露到网络前请确认）\n";
             return 0;
         }
         if (a == "--no-open") {
             opts.noOpen = true;
+        } else if (a == "--allow-remote") {
+            opts.allowRemote = true;
         } else if (a == "--diff") {
             opts.wantDiff = true;
+        } else if (a == "--bind" && i + 1 < args.size()) {
+            opts.bind = args[++i];
         } else if (a == "--port" && i + 1 < args.size()) {
             const std::string v = args[++i];
             try {

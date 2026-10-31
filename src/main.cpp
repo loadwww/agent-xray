@@ -19,7 +19,7 @@ const char* kVersion = "0.4.1";
 void printUsage() {
     std::cout << "AgentXray " << kVersion << "\n\n"
               << "用法:\n"
-              << "  axr demo [--port 8787] [--no-open] [--diff]\n"
+              << "  axr demo [--port 8787] [--bind 127.0.0.1] [--allow-remote] [--no-open] [--diff]\n"
               << "  axr serve [--config config.yaml] [--root dir] [--listen port] [--bind host]\n"
               << "            [--allow-remote]\n"
               << "  axr run [--config config.yaml] [--root dir] [--listen port] [--allow-remote]\n"

@@ -25,7 +25,7 @@ axr demo
 
 | 维度 | 支持 | 已知不支持 |
 |---|---|---|
-| 操作系统 | Windows x64（单文件静态构建）；Linux / macOS（cmake + libcurl 构建） | 32 位 Windows |
+| 操作系统 | Windows x64、Linux x86_64 提供预编译包；macOS / 其他架构从源码构建 | 32 位 Windows |
 | 协议 | OpenAI 兼容 chat completions（含流式 SSE），上游任意 HTTP/HTTPS | Responses API、Anthropic `/v1/messages`、embeddings、models 等端点：原样转发但不还原、不进统计 |
 | 接入方式 | 只改 `OPENAI_BASE_URL` 一行 | 不改 base URL 的 MITM 证书模式（本期不做） |
 
@@ -37,23 +37,42 @@ axr demo
 > 全部失败或被拒，自动标红，顶部提示「最早出现在 Step 8」；甘特图给出总耗时与工具的并行关系。
 > 一键折叠后只看主模型链路：[折叠视图](docs/webui-collapsed.png)（`?collapse=1`）。
 
-## 部署（Windows）
+## 安装
+
+Linux x86_64（预编译，无需编译；脚本会校验 SHA256，装到 `~/.local/bin`）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/loadwww/agent-xray/master/scripts/install.sh | sh
+```
+
+Windows（预编译；装到 `%LOCALAPPDATA%\Programs\axr` 并加入用户 PATH，**新开**的终端生效）：
 
 ```powershell
 irm https://raw.githubusercontent.com/loadwww/agent-xray/master/scripts/install.ps1 | iex
 ```
 
-装到 `%LOCALAPPDATA%\Programs\axr` 并加入用户 PATH（**新开**的终端生效）。然后：
+Docker（镜像基于 ubuntu:24.04 + libcurl4，不含编译工具链）：
 
-```powershell
-$env:OPENAI_API_KEY  = "<你的 key>"
-$env:OPENAI_BASE_URL = "http://127.0.0.1:8080/v1"   # 让 agent 走 axr 代理
-axr serve --listen 8080                             # 起代理，浏览器打开 127.0.0.1:8080/__xray
-axr show <runID>                                    # 终端看步骤 / token / 工具扇出
+```bash
+# 直接跑离线 demo，浏览器打开 http://127.0.0.1:8787/__xray
+docker run --rm -p 8787:8787 ghcr.io/loadwww/agent-xray:latest axr demo --no-open --port 8787 --bind 0.0.0.0 --allow-remote
+# 代理模式，录制落到当前目录
+docker run --rm -p 8080:8080 -v "$PWD:/data" ghcr.io/loadwww/agent-xray:latest serve --listen 8080 --bind 0.0.0.0 --allow-remote --root /data
 ```
 
-`axr serve` 是前台程序，不会自动弹浏览器，窗口关掉或 `Ctrl+C` 就结束并落盘。想让它不占用 agent
-所在的终端，就在独立窗口里起：
+macOS 与其他架构暂未提供预编译包，请从源码构建（见「构建（Linux/macOS）」）。
+
+## 接到你的 Agent 上
+
+```bash
+export OPENAI_API_KEY="<你的 key>"                    # PowerShell: $env:OPENAI_API_KEY = "..."
+export OPENAI_BASE_URL="http://127.0.0.1:8080/v1"     # 让 agent 走 axr 代理
+axr serve --listen 8080                               # 起代理，浏览器打开 127.0.0.1:8080/__xray
+axr show <runID>                                      # 终端看步骤 / token / 工具扇出
+```
+
+`axr serve` 是前台程序，不会自动弹浏览器，窗口关掉或 `Ctrl+C`（Linux 也支持 `kill -TERM`）就结束并落盘。
+想让它不占用 agent 所在的终端，就在独立窗口里起（Windows）：
 
 ```powershell
 Start-Process axr -ArgumentList 'serve','--listen','8080' -WorkingDirectory D:\agent-xray
@@ -63,20 +82,10 @@ Start-Process axr -ArgumentList 'serve','--listen','8080' -WorkingDirectory D:\a
 run 产物并开一个新会话，避免单个 `events.jsonl` 无限增长。启动时还会按 `storage.retention_days`
 自动清理过期 run（<=0 关闭），手动执行用 `axr prune --auto`。
 
-`config.yaml` 默认从**当前目录**读取；不在仓库目录时用 `--config D:\agent-xray\config.yaml`
+`config.yaml` 默认从**当前目录**读取；不在仓库目录时用 `--config D:\agent-xray/config.yaml`
 （否则会静默使用内置默认上游，你的 `model_map` 等配置不生效）。
 
-## 部署（Linux / macOS）
-
-无预编译包，从源码构建（依赖见下节「构建（Linux/macOS）」）。三条命令即可跑起来：
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j   # 构建
-OPENAI_BASE_URL=http://127.0.0.1:8080/v1 ./build/axr serve --listen 8080 --config config.yaml
-# 浏览器打开 127.0.0.1:8080/__xray；Ctrl+C 或 kill -TERM <pid> 都会收尾并写出 meta.json
-```
-
-已知限制：只监听本机回环、无鉴权；需要对外监听时显式加 `--allow-remote`。run 目录权限为 0700。
+默认只监听本机回环、无鉴权；需要对外监听时显式加 `--allow-remote`。run 目录权限为 0700。
 
 ## 构建（Linux/macOS）
 

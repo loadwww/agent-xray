@@ -1,0 +1,130 @@
+name: release
+
+# 打 tag（v*）时：Linux/Windows 双平台构建 → 干净容器验收 → 发布资产 → 推送 Docker 镜像
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: 依赖
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev
+      - name: 配置 + 构建
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j
+      - name: selftest + e2e
+        run: |
+          ./build/axr selftest
+          bash tests/e2e_proxy.sh
+      - name: 打包（二进制 + LICENSE + README）
+        run: |
+          mkdir -p dist
+          cp build/axr dist/axr
+          cp LICENSE README.md dist/
+          tar -czf dist/axr-linux-x86_64.tar.gz -C dist axr LICENSE README.md
+      - name: 干净容器验收（ubuntu:24.04，验证 glibc / libcurl 依赖）
+        run: |
+          docker run --rm -v "$PWD/dist:/dist:ro" ubuntu:24.04 bash -c '
+            set -eux
+            apt-get update -qq
+            apt-get install -y -qq --no-install-recommends ca-certificates libcurl4
+            mkdir -p /tmp/x && tar -xzf /dist/axr-linux-x86_64.tar.gz -C /tmp/x
+            /tmp/x/axr version
+            /tmp/x/axr selftest
+            /tmp/x/axr demo --diff
+          '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-dist
+          path: dist/axr-linux-x86_64.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建（MSVC + Ninja，脚本内含 selftest）
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File scripts/build.ps1
+      - name: selftest + e2e
+        shell: pwsh
+        run: |
+          .\build\axr.exe selftest
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          powershell -ExecutionPolicy Bypass -File tests/e2e_proxy.ps1
+      - name: 打包（zip 与裸 exe 都发，install.ps1 用的是裸 exe）
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item build\axr.exe dist\axr.exe
+          Copy-Item LICENSE, README.md dist\
+          Compress-Archive -Path dist\axr.exe, dist\LICENSE, dist\README.md -DestinationPath dist\axr-windows-x64.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-dist
+          path: |
+            dist/axr-windows-x64.zip
+            dist/axr.exe
+
+  publish:
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: 生成 SHA256SUMS
+        working-directory: dist
+        run: |
+          sha256sum axr-linux-x86_64.tar.gz axr-windows-x64.zip axr.exe > SHA256SUMS
+          cat SHA256SUMS
+      - name: 创建 Release（What's changed 由上一个 tag 的提交自动生成）
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          prev=$(git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>/dev/null || true)
+          {
+            echo "## What's changed"
+            echo
+            if [ -n "$prev" ]; then
+              git log --pretty='- %s' "$prev..HEAD"
+            else
+              echo "- 首个发布"
+            fi
+            echo
+            cat .github/release-notes.md
+          } > release-notes.md
+          gh release create "${{ github.ref_name }}" \
+            --title "AgentXray ${{ github.ref_name }}" \
+            --notes-file release-notes.md \
+            dist/axr-linux-x86_64.tar.gz dist/axr-windows-x64.zip dist/axr.exe dist/SHA256SUMS
+
+  docker:
+    needs: [publish]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            AXR_VERSION=${{ github.ref_name }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}:latest

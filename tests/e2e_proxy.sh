@@ -207,6 +207,12 @@ check "$DEMO_RC" "demo SIGINT 退出码 0"
 LEFTOVER=$(find "$DEMO_TMP" -name 'axr-demo-*' 2>/dev/null | wc -l | tr -d ' ')
 [ "$LEFTOVER" -eq 0 ]; check "$?" "demo SIGINT 退出后临时目录已清理（实际 $LEFTOVER）"
 
+# A4：容器里要监听 0.0.0.0，但必须显式 --allow-remote
+BIND_OUT=$(XDG_CACHE_HOME= TMPDIR="$DEMO_TMP" "$AXR" demo --bind 0.0.0.0 --no-open --port 8792 2>&1)
+BIND_RC=$?
+[ "$BIND_RC" -ne 0 ]; check "$?" "demo 非回环 bind 未加 --allow-remote 被拒绝（码 $BIND_RC）"
+echo "$BIND_OUT" | grep -q "allow-remote"; check "$?" "拒绝提示里给出 --allow-remote"
+
 if [ "$FAIL" -gt 0 ]; then
     echo
     echo "结果: $FAIL 项失败"
