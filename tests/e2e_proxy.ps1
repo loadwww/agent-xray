@@ -207,6 +207,27 @@ try {
     if (!$serve.HasExited) { Stop-Process -Id $serve.Id -Force }
     Check (Test-Path (Join-Path $serveRoot "runs")) "serve 也创建了会话目录"
 
+    Write-Host "[4.1] WP6 serve 无流量不创建会话目录（懒建）"
+    $quietRoot = Join-Path $build "e2e-serve-quiet"
+    if (Test-Path $quietRoot) { Remove-Item -Recurse -Force $quietRoot }
+    $quiet = Start-Process -FilePath $axr -PassThru -WindowStyle Hidden `
+        -ArgumentList "serve", "--config", $cfg, "--root", $quietRoot, "--listen", "8085" `
+        -RedirectStandardOutput (Join-Path $build "e2e-serve-quiet.log")
+    $quietUp = $false
+    for ($i = 0; $i -lt 60; $i++) {
+        try {
+            $c = New-Object System.Net.Sockets.TcpClient
+            $c.Connect("127.0.0.1", 8085)
+            $c.Close()
+            $quietUp = $true
+            break
+        } catch { Start-Sleep -Milliseconds 100 }
+    }
+    Check $quietUp "serve 开始监听 8085（无流量）"
+    if (!$quiet.HasExited) { Stop-Process -Id $quiet.Id -Force }
+    Start-Sleep -Milliseconds 300
+    Check (-not (Test-Path (Join-Path $quietRoot "runs"))) "无流量 serve 未创建 run 目录"
+
     Start-Sleep -Milliseconds 400
     $serveRun = Get-ChildItem (Join-Path $serveRoot "runs") -Directory | Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
