@@ -647,6 +647,18 @@ int cmdSelftest(const std::vector<std::string>& args) {
         t.check(cr.runs.size() == 2, "T6 间隔 45 分钟切成 2 个 run");
     });
 
+    // T14 两个独立任务共享同一 system prompt（间隔仅 5 秒）：不得串成一条链
+    testFixture(dir, "t14_two_tasks_same_system", t, [&](const ChainResult& cr) {
+        t.check(cr.runs.size() == 2, "T14 共享 system prompt 的两个任务切成 2 个 run");
+        bool allTwoSteps = true, allComplete = true;
+        for (const auto& r : cr.runs) {
+            if (r.steps.size() != 2) allTwoSteps = false;
+            if (r.incomplete) allComplete = false;
+        }
+        t.check(allTwoSteps, "T14 每个 run 各 2 步");
+        t.check(allComplete, "T14 两个 run 均完整（无 incomplete）");
+    });
+
     // 30 条请求的长链
     testFixture(dir, "deepseek_tool_2", t, [&](const ChainResult& cr) {
         t.check(cr.runs.size() == 1, "长链 1 run");

@@ -6,6 +6,19 @@
 #include "chain/prefix.h"
 
 namespace axr {
+namespace {
+
+// 命中的前缀是否只含 system 消息：两个独立任务常共享同一段 system prompt，
+// 仅 system 相同不能算同一条任务链，否则会把不同会话拼成一个 run（跨任务串链）。
+bool prefixIsOnlySystem(const std::vector<Message>& msgs, int prefixLen) {
+    if (prefixLen <= 0) return true;
+    for (int k = 0; k < prefixLen; ++k) {
+        if (msgs[static_cast<std::size_t>(k)].role != Role::System) return false;
+    }
+    return true;
+}
+
+} // namespace
 
 LinkResult buildLinks(const std::vector<LLMCall>& calls, const ChainOptions& opts) {
     LinkResult result;
@@ -48,7 +61,8 @@ LinkResult buildLinks(const std::vector<LLMCall>& calls, const ChainOptions& opt
 
         Link link;
         link.to = static_cast<int>(i);
-        if (bestParent >= 0) {
+        // 命中前缀全是 system → 视为新任务的根，不建边（走 fuzzy 兜底，fuzzy 无命中即为新 run）
+        if (bestParent >= 0 && !prefixIsOnlySystem(calls[i].messages, bestK)) {
             link.from = bestParent;
             link.newMsgs = static_cast<int>(calls[i].messages.size()) - bestK;
             link.fuzzy = false;
