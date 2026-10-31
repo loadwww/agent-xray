@@ -2,7 +2,7 @@
 
 > 本文供下一个对话接手。第一批（P0-1 → P0-2 → P0-3 → P1-5 的 1、2 两条）、第二批
 > （P1-4 → P1-5 的 3、4 两条 → P1-6）与第三批（P2-7 ~ P2-12）均已完成，所有改动已 push 到
-> `origin/master`，CI 双平台绿。
+> `origin/master`，CI 双平台绿。第四批（P2-13 ~ P2-16）进行中。
 
 ## 一、基线与环境
 
@@ -141,6 +141,18 @@ cmake --build build -j
 - e2e（`tests/e2e_proxy.sh` / `.ps1`）：新增「子进程无 OLLAMA_HOST」与「`/ollama/v1` 前缀可采集」两条；
   `tests/fake_agent.py` 用 `AXR_FAKE_PATH` 切换客户端 base 前缀
 - 验收：Windows / WSL Linux selftest 250 全过；Windows e2e 与 WSL `e2e_proxy.sh` 全过
+
+### P2-13 采集模式与隐私 — commit `629b99e`
+- `proxy.capture: full|summary`（`config.h` / `config.cpp` / `config.yaml` / README）：summary 模式
+  在 `src/proxy/server.cpp::captureBody` 里只落 `[capture:summary size=N sha256=<前16位>]`，
+  req / resp / sse_chunk 都不存正文（脱敏后再摘要）
+- `Config::RedactCfg` 默认词表扩为 4 条：保留 `sk-...`，新增 `Bearer ...`、`api_key...`、`x-api-key...`；
+  头脱敏不变
+- `store/run_dir.cpp`：非 Windows 下 `ensureRunDir` 用 `permissions(replace, owner_all)` 把 run 目录设为 0700
+- `cli_common`：新增 `--allow-remote`、`isLoopbackBind()`、`enforceBindPolicy()`；`axr serve` / `axr run`
+  在 bind 非 127.0.0.1 / localhost / ::1 且未显式开启时拒绝启动
+- selftest：新增 `testCapturePrivacy`（配置、摘要内容、脱敏命中、bind 策略、Linux 0700 权限）
+- 验收：Windows selftest 265 全过；WSL Linux selftest 266 全过（多出的是 POSIX 权限断言）
 
 ## 三、关键代码事实（供下一个对话快速定位）
 
