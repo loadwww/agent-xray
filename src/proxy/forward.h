@@ -1,6 +1,8 @@
 #pragma once
 // 上游 HTTP(S) 转发（§7.1.3 的等价实现）
-// 说明：本机未提供 libcurl 开发包，改用 Windows 内置 WinHTTP（系统 Schannel 支持 HTTPS，零第三方依赖）
+// 平台实现拆分（forwardHttp 定义在其中任意一个里）：
+//   Windows → forward_winhttp.cpp（内置 WinHTTP，零第三方依赖）
+//   其他    → forward_curl.cpp（libcurl easy handle）
 #include <functional>
 #include <string>
 #include <utility>

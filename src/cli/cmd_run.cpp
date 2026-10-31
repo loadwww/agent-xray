@@ -1,5 +1,6 @@
 #include "cli/cli.h"
 
+#include <filesystem>
 #include <iostream>
 
 #include "cli/cli_common.h"
@@ -44,7 +45,7 @@ int cmdRun(const std::vector<std::string>& args) {
                   << " tokens" << (s.incomplete ? " · ⚠ incomplete" : "") << "\n";
         for (const auto& m : s.missing) std::cout << "  ! " << m << "\n";
         std::cout << "  输出: " << s.runDir << "\n";
-        std::cout << "  流程图: " << s.runDir << "\\graph.mmd\n";
+        std::cout << "  流程图: " << (std::filesystem::path(s.runDir) / "graph.mmd").string() << "\n";
         if (!s.reportPath.empty()) std::cout << "  报告: " << s.reportPath << "\n";
     }
     if (childExit != 0) std::cout << "  目标进程退出码: " << childExit << "\n";
