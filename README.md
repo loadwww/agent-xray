@@ -65,7 +65,16 @@ SSE responses are forwarded chunk by chunk as they arrive, so streaming clients 
 
 ## Works with
 
-Anything that speaks OpenAI-compatible `chat/completions` and lets you change its base URL: Aider, Cline, Continue, Ollama, vLLM, LM Studio, LiteLLM, or your own OpenAI SDK / LangChain agent. That's the whole integration: one environment variable.
+Anything that speaks OpenAI-compatible `chat/completions` and lets you change its base URL. One environment variable is the whole integration. Copy-paste recipes with verification notes: [docs/recipes.md](docs/recipes.md).
+
+| Tool | How | Status |
+|---|---|---|
+| OpenAI SDK / LangChain (custom agent) | `OPENAI_BASE_URL=http://127.0.0.1:8080/v1` | Verified |
+| LiteLLM | axr upstream → `http://127.0.0.1:4000` | Verified |
+| curl / raw HTTP | same base URL | Verified |
+| Aider | `OPENAI_API_BASE=…` | Docs, unverified ([#3](https://github.com/loadwww/agent-xray/issues/3)) |
+| Cline / Continue | "OpenAI Compatible" provider base URL | Docs, unverified ([#4](https://github.com/loadwww/agent-xray/issues/4)) |
+| Ollama / vLLM / LM Studio | local server as axr upstream | Docs, unverified ([#5](https://github.com/loadwww/agent-xray/issues/5)) |
 
 Not supported: Responses API, Anthropic `/v1/messages`, embeddings. Those are forwarded byte-for-byte but not reconstructed or counted (see [Limitations](#limitations)).
 
@@ -142,6 +151,16 @@ proxy:
 Logs are redacted by default: `authorization` / `x-api-key` / `api-key` headers and `sk-...` / `Bearer` values are replaced before they hit disk. The proxy never reuses your key for anything else.
 
 ## Comparison
+
+| | Langfuse | LangSmith | Phoenix | Helicone | AgentXray |
+|---|---|---|---|---|---|
+| Code changes required | Yes — SDK / decorators | Yes — SDK | Yes — OTel / SDK | No — proxy, or SDK | **No** — change `OPENAI_BASE_URL` |
+| Data leaves your machine | Yes (cloud), self-host possible | Yes (cloud) | No if run locally | Yes (cloud), self-host possible | **No — never** |
+| Streaming capture | Yes | Yes | Yes | Yes | Yes, chunk-by-chunk, rendered live |
+| Diff between two runs | No | No | No | No | **Yes** |
+| Evals / prompt management | Yes | Yes | Evals yes, prompts partial | Partial | **None — deliberately** |
+| Self-host footprint | ClickHouse + Redis + workers | Enterprise-only | One service | Several services | **One binary** |
+| Protocol scope | Framework SDKs | LangChain + SDK | Anything via OTel | Many providers via gateway | OpenAI-compatible `chat/completions` only |
 
 If you need evals, prompt management, datasets, or a team cloud, use Langfuse (or LangSmith / Phoenix / Helicone). Those are the right tools for that job, and most of them require instrumenting the code you're trying to debug.
 
