@@ -154,6 +154,16 @@ cmake --build build -j
 - selftest：新增 `testCapturePrivacy`（配置、摘要内容、脱敏命中、bind 策略、Linux 0700 权限）
 - 验收：Windows selftest 265 全过；WSL Linux selftest 266 全过（多出的是 POSIX 权限断言）
 
+### P2-14 截断事件不参与解析 — commit `fce9fd4`
+- `src/store/events_reader.cpp::assembleCalls`：`truncated=true` 的 req 跳过 JSON / `parseOpenAiRequest`，
+  直接 `++parseFailed` 并置 `resp.err = "req_body 被截断，无法解析"`；非流式 resp 截断时同样跳过正文解析，
+  保留 `status` / `latency_ms`，置 `resp.err = "resp_body 被截断，无法解析"`
+- 截断的 pair 仍保留并进入链，用于在界面上定位这次失败调用；流式响应截断仍沿用 `sse_end` 累积结果
+- selftest：新增 `testTruncatedSkipParse`（req / resp 两路）；T15 与 P0-3 的 `parse_failed` 断言
+  由 0 改为 1，反映行为变化
+- README 边界补充截断正文不参与解析的说明
+- 验收：Windows selftest 275 全过；WSL Linux selftest 276 全过
+
 ## 三、关键代码事实（供下一个对话快速定位）
 
 - 转发层平台实现：`src/proxy/forward_winhttp.cpp`（`#ifdef _WIN32`）+ `src/proxy/forward_curl.cpp`（其它平台，libcurl）
@@ -194,7 +204,7 @@ cmake --build build -j
 - [x] 工具失败区分 confirmed/inferred；usage 缺失显示 "—"（P2-7 / P2-9）
 - [x] inject_usage 默认开且自动降级；OLLAMA_HOST 修正（P2-8 / P2-12）
 - [x] run id 防撞（P2-10）
-- [ ] 截断事件不参与解析（P2-14）
+- [x] 截断事件不参与解析（P2-14）
 - [ ] summary 采集模式；retention 自动执行；UI 增量刷新（P2-13 / P2-15 / P2-16）
 - [x] 设计文档降级为历史文档，架构文档与实现一致（P1-6）
 
@@ -203,6 +213,6 @@ cmake --build build -j
 1. **PowerShell 管道缓冲**：`.\build\axr.exe selftest` 崩溃前的输出可能被吞；调试时可在 `cmdSelftest` 开头临时加 `std::setvbuf(stdout,nullptr,_IONBF,0)`
 2. **NativeCommandError**：stderr 内容会被 PowerShell 显示为错误红框，但 exit 0 属正常（selftest 日志走 stderr）
 3. **selftest bench < 100ms**：在 WSL 的 `/mnt/d`（drvfs）上会因 I/O 慢超时（实测 130ms）；必须在原生 ext4 上跑（CI 不受影响）
-4. **P2-14 与 P0-3 重叠**：P0-3 已对 truncated 事件计数，但 `truncated=true` 的事件目前仍会被 `parseOpenAiRequest` 尝试解析（可能产生空 pair）。P2-14 需在 events_reader 里对 truncated 的 req 跳过 parse、直接计入 parseFailed，而不是只计数
+4. **P2-14 与 P0-3 重叠**：P0-3 已对 truncated 事件计数；P2-14 已在 `events_reader` 里对 truncated 的 req / 非流式 resp 跳过 parse、直接计入 parseFailed（不产生空 pair 解析错误）
 5. **CI windows job 的 selftest**：build.ps1 末尾虽调用 selftest，但非零退出不会让脚本 fail，所以 ci.yml 里单独加了一步显式检查退出码
 6. **commit 推送**：GitHub token 需要 `workflow` scope 才能推 `.github/workflows/*`（`gh auth refresh -s workflow`）
