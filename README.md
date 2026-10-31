@@ -55,6 +55,18 @@ run 产物并开一个新会话，避免单个 `events.jsonl` 无限增长。启
 `config.yaml` 默认从**当前目录**读取；不在仓库目录时用 `--config D:\agent-xray\config.yaml`
 （否则会静默使用内置默认上游，你的 `model_map` 等配置不生效）。
 
+## 部署（Linux / macOS）
+
+无预编译包，从源码构建（依赖见下节「构建（Linux/macOS）」）。三条命令即可跑起来：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j   # 构建
+OPENAI_BASE_URL=http://127.0.0.1:8080/v1 ./build/axr serve --listen 8080 --config config.yaml
+# 浏览器打开 127.0.0.1:8080/__xray；Ctrl+C 或 kill -TERM <pid> 都会收尾并写出 meta.json
+```
+
+已知限制：只监听本机回环、无鉴权；需要对外监听时显式加 `--allow-remote`。run 目录权限为 0700。
+
 ## 构建（Linux/macOS）
 
 Python 侧无依赖，只需要 C++17 编译器与 CMake；Ubuntu/Debian 先 `sudo apt install cmake g++ libcurl4-openssl-dev`
@@ -90,7 +102,7 @@ cmake --build build -j
 
 | 场景 | 你怎么用 | 得到什么 |
 |---|---|---|
-| 工具报错排查 | `axr show <runID>`，或浏览器打开该 run | 失败的 Step 与工具、错误原文、失败发生在第几步 |
+| 工具报错排查 | `axr show <sessionID\|runID>`，或浏览器打开该 run | 失败的 Step 与工具、错误原文、失败发生在第几步 |
 | 长任务复盘 | 收尾后看 `report.md` | 概览 / 执行流程 / 时间线 / 工具表 / Token 用量 |
 | 两次运行对比 | `axr diff <runA> <runB>` | 新增或消失的 Step、参数 / 结果变化、token 差值 |
 | 框架横向对比 | 同一任务分别接 AutoGPT、smolagents、手写脚本 | 步数、token、工具并行结构 |
@@ -100,16 +112,21 @@ cmake --build build -j
 
 ```powershell
 axr serve --listen 8080                        # 常驻代理（Ctrl+C 收尾）
-axr show <目录|runID>                          # 终端摘要：状态 / token / 模型 / 时间线 / 工具扇出
-axr report <目录|runID> [--out report.md]      # 生成 Markdown 报告
-axr list --root <root> [--json]                # 列出所有 run（steps / tools / fail_tools / tokens）
-axr export --root <root> <runID> --format mermaid  # 导出流程图（json 则导出完整 Run）
+axr show <sessionID|runID|目录>                 # 终端摘要：状态 / token / 模型 / 时间线 / 工具扇出
+axr show <sessionID> --run <runID>              # 多 run session 里只看指定的非主 run
+axr report <sessionID|runID|目录> [--out report.md]   # 生成 Markdown 报告
+axr list --root <root> [--json] [--all]        # 列出所有 run（steps / tools / fail_tools / tokens）
+axr export <sessionID|runID|目录> --format mermaid    # 导出流程图（json 则导出完整 Run）
 axr diff <runA> <runB>                         # 按 Step 对齐比较两次运行
 axr prune --days 7 --root <root> [--apply]     # 清理旧 run（默认 dry-run）
 axr prune --auto --root <root>                 # 按 storage.retention_days 自动清理（serve 启动时同策略）
 ```
 
-`<root>` 默认是 `%USERPROFILE%\.xray`，每个 run 一个目录：
+`show` / `report` / `export` 的第一个参数既可以是 session 目录（或 `events.jsonl` 路径），
+也可以是 `sessionID`（如 `20261030-150000-4e87edbb`），还可以直接是某个 run 的 `runID`
+（如 `20261030-150000-4e87edbb-9c3e-0000`，会自动定位到所属 session 并只看这一条）。
+`--run` 用于在一个 session 有多个 run 时指定非主 run；`<root>` 默认是 `%USERPROFILE%\.xray`，
+每个 run 一个目录：
 
 ```
 <root>/runs/<sessionId>/
@@ -202,9 +219,21 @@ proxy:
 
 ## 版本与更新
 
-当前版本 `v0.4.0`。Windows 单文件 `axr.exe` 随
+当前版本 `v0.4.1`。Windows 单文件 `axr.exe` 随
 [Releases](https://github.com/loadwww/agent-xray/releases) 发布；安装脚本总是拉取 latest，
-`axr version` 可查看本地版本。本次更新集中在「数据准确性、隐私与长期运行」，详见 Release 说明。
+`axr version` 可查看本地版本。
+
+v0.4.1 修复项：
+
+- `run id` 追加 session 命名空间段，不同 session 即使首请求同秒、根哈希相同也不会撞 id；
+- `axr show` / `report` / `export` 可直接传真实 `runID`（自动定位所属 session 并选中该 run），
+  `show --help` / `list --help` 正常打印用法并返回 0；
+- 请求正文不可解析（`capture: summary` 或截断）的 run 标记为 `incomplete`，`missing` 写明原因，
+  不再显示成「成功的空壳任务」；
+- full 模式下流式 `sse_chunk` 落盘前同样脱敏，转发给客户端的字节不受影响；
+- Linux / macOS 下 `Ctrl+C` / `SIGTERM` 会收尾（flush + finalize），不再留下没有 meta 的采集中目录；
+- `axr serve` 改为首个事件到来时才创建会话目录，空跑不留 0 步「无 meta」噪音；
+- CI 增加 Windows / Linux 双平台 e2e（含流式脱敏、SIGINT 收尾、懒建会话用例）。
 
 ## 许可证
 
