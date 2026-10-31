@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120" role="img" aria-label="AgentXray">
+  <rect width="120" height="120" rx="26" fill="#111827"/>
+  <path d="M36 36 L84 84 M84 36 L36 84" stroke="#F9F8F6" stroke-width="9" stroke-linecap="round"/>
+</svg>
