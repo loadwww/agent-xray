@@ -164,6 +164,20 @@ cmake --build build -j
 - README 边界补充截断正文不参与解析的说明
 - 验收：Windows selftest 275 全过；WSL Linux selftest 276 全过
 
+### P2-15 实时视图增量解析 + serve 空闲收尾 — commit `83cd9f4`
+- `store/events_reader`：抽出 `parseEventLine`；新增 `EventsTail::poll`（按 (size, mtime) 判断变化，
+  只 seek 到 offset 读新增字节，未写完的尾行留在 `pending`，文件被截断时自动重置重读）与
+  `buildChainFromRawEvents`
+- `ui/webui.cpp`：新增按 runDir 的 `LiveEntry` 缓存（`EventsTail` + `shared_ptr<ChainResult>`，
+  mutex 保护、上限 64 个会话）；`liveSummary` / `webUiRun` 改走 `liveChain`，文件未变直接复用
+- `cli/cmd_serve.cpp`：`ServeSessions` 管理当前 Recorder / session；新增
+  `storage.idle_finalize_minutes`（默认 10，<=0 关闭），空闲超阈值时 finalize 当前会话（
+  dropped / rewritten 按会话差值计算）并开新会话，打印新旧会话路径
+- `config`：`StorageCfg::idleFinalizeMinutes` 与解析、`config.yaml` 注释同步
+- selftest：新增 `testLiveIncremental`（配置默认/可关闭、首次全量、未变化不重读、追加后只读新增、
+  Step 增长且 run id 稳定、半行 pending）
+- 验收：Windows selftest 286 全过；WSL Linux selftest 287 全过
+
 ## 三、关键代码事实（供下一个对话快速定位）
 
 - 转发层平台实现：`src/proxy/forward_winhttp.cpp`（`#ifdef _WIN32`）+ `src/proxy/forward_curl.cpp`（其它平台，libcurl）
