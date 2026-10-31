@@ -284,62 +284,84 @@ WebResponse webUiPage() {
 <title>AgentXray · 执行流程</title>
 <style>
   :root{
-    --bg:#0e1116; --panel:#151a21; --panel2:#1b222c; --line:#2a3340;
-    --fg:#e6edf3; --dim:#8b98a9; --accent:#4c9aff; --ok:#3fb950; --warn:#d29922; --bad:#f85149;
+    /* 暖白极简（参考 magicv.art dashboard）：象牙底 + 近黑文字 + 细边框 + 深墨色主按钮 */
+    --bg:#f9f8f6; --panel:#ffffff; --panel2:#f4f2ed; --line:#e6e5e0;
+    --fg:#1b1b18; --dim:#686864; --ink:#111827;
+    --accent:#3e63dd; --ok:#2ca77f; --warn:#b27a06; --bad:#e5484d;
+    --shadow:0 1px 2px rgba(17,24,39,.04), 0 8px 24px rgba(17,24,39,.04);
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 "Segoe UI",system-ui,sans-serif}
-  header{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel)}
-  header h1{font-size:16px;margin:0;font-weight:600}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 "Segoe UI",system-ui,-apple-system,sans-serif;
+       -webkit-font-smoothing:antialiased}
+  ::selection{background:#dbe4ff}
+  header{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);
+         background:rgba(249,248,246,.82);backdrop-filter:blur(18px);position:relative;z-index:2}
+  header h1{font-size:16px;margin:0;font-weight:650;letter-spacing:.2px}
+  .brand{width:22px;height:22px;border-radius:7px;background:var(--ink);color:#fff;display:inline-flex;
+         align-items:center;justify-content:center;font-size:12px;font-weight:700;margin-right:2px}
   header .hint{color:var(--dim);font-size:12px}
   .wrap{display:grid;grid-template-columns:300px 1fr;height:calc(100vh - 53px)}
-  aside{border-right:1px solid var(--line);overflow:auto;background:var(--panel)}
-  .aside-head{position:sticky;top:0;background:var(--panel);padding:10px 14px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--dim)}
+  aside{border-right:1px solid var(--line);overflow:auto;background:rgba(255,255,255,.72);backdrop-filter:blur(18px)}
+  .aside-head{position:sticky;top:0;background:rgba(255,255,255,.92);padding:10px 14px;border-bottom:1px solid var(--line);
+              display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--dim);z-index:1}
   .run-item{padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer}
   .run-item:hover{background:var(--panel2)}
-  .run-item.active{background:#1d2836;border-left:3px solid var(--accent);padding-left:11px}
-  .run-item .id{font-family:Consolas,monospace;font-size:12px}
+  .run-item.active{background:#ecebe5;border-left:3px solid var(--ink);padding-left:11px}
+  .run-item .id{font-family:Consolas,ui-monospace,monospace;font-size:12px}
   .run-item .meta{font-size:11px;color:var(--dim);margin-top:2px}
   .run-item.sub{padding:7px 14px 7px 26px}
   .run-group{padding:3px 14px;font-size:11px;color:var(--dim);cursor:pointer;user-select:none}
   .run-group:hover{color:var(--fg)}
   main{padding:18px 22px;overflow:auto}
   .chips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 16px}
-  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:12px;color:var(--dim)}
+  .chip{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:12px;
+        color:var(--dim);box-shadow:0 1px 1px rgba(17,24,39,.03)}
   .chip b{color:var(--fg);font-weight:600}
-  .banner{border:1px solid var(--warn);background:#2a2210;color:#f0d795;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px}
-  .banner.bad{border-color:var(--bad);background:#2a1416;color:#ffb3b0}
-  h2{font-size:14px;font-weight:600;margin:22px 0 10px;color:#c9d5e3}
-  .flow{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;overflow:auto}
+  .banner{border:1px solid #e3c58e;background:#faf3e3;color:#6b4b00;border-radius:10px;padding:10px 14px;
+          margin-bottom:14px;font-size:13px}
+  .banner.bad{border-color:#f1b9b9;background:#fdeeee;color:#a12b2b}
+  h2{font-size:14px;font-weight:650;margin:22px 0 10px;color:var(--fg)}
+  .flow{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;overflow:auto;
+        box-shadow:var(--shadow)}
   svg text{font-family:"Segoe UI",system-ui,sans-serif}
-  table{border-collapse:collapse;width:100%;font-size:13px;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  table{border-collapse:collapse;width:100%;font-size:13px;background:var(--panel);border:1px solid var(--line);
+        border-radius:10px;overflow:hidden;box-shadow:0 1px 2px rgba(17,24,39,.03)}
   th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
   th{background:var(--panel2);color:var(--dim);font-weight:500;font-size:12px}
-  td.mono{font-family:Consolas,monospace;font-size:12px}
-  .tag{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;border:1px solid var(--line);color:var(--dim)}
-  .tag.err{border-color:var(--bad);color:#ff9d99}
-  .tag.warn{border-color:var(--warn);color:#f0d795}
-  .tag.fuzzy{border-color:var(--warn);color:#f0d795}
-  .tag.live{border-color:var(--ok);color:#9ae6b4}
-  .bad{color:#ff9d99;font-weight:600}
-  .btn{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 12px;font-size:12px;cursor:pointer}
-  .btn:hover{border-color:var(--accent);color:#cfe2ff}
+  td.mono{font-family:Consolas,ui-monospace,monospace;font-size:12px}
+  .tag{display:inline-block;padding:1px 7px;border-radius:999px;font-size:11px;border:1px solid var(--line);color:var(--dim);
+       background:var(--panel)}
+  .tag.err{border-color:var(--bad);color:#b42318;background:#fdf1f1}
+  .tag.warn{border-color:#c89a3c;color:#7a5200;background:#fcf6e6}
+  .tag.fuzzy{border-color:#c89a3c;color:#7a5200;background:#fcf6e6}
+  .tag.live{border-color:var(--ok);color:#1f7a5c;background:#eef8f4}
+  .bad{color:#b42318;font-weight:600}
+  .btn{background:var(--ink);color:#fff;border:1px solid var(--ink);border-radius:10px;padding:6px 14px;font-size:12px;
+       cursor:pointer;transition:opacity .15s ease, transform .15s ease}
+  .btn:hover{opacity:.9}
+  .btn:active{transform:translateY(1px)}
   header .spacer{flex:1}
   .gantt-head{display:flex;gap:14px;align-items:baseline;flex-wrap:wrap;margin-bottom:8px;font-size:12px}
   .gantt-head span{font-size:11px}
   .legend{display:flex;gap:16px;margin-top:8px;font-size:11px;color:var(--dim)}
   .legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:middle}
   .nowrap{white-space:nowrap}
-  details.step{margin-top:10px;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+  details.step{margin-top:10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;
+               box-shadow:0 1px 2px rgba(17,24,39,.03)}
   details.step>summary{cursor:pointer;padding:10px 14px;font-size:13px}
   details.step>div{padding:0 14px 14px}
-  pre{background:#0b0f14;border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;font-size:12px;max-height:320px;white-space:pre-wrap;word-break:break-word}
+  pre{background:#f6f4ef;border:1px solid var(--line);border-radius:10px;padding:10px;overflow:auto;font-size:12px;
+      max-height:320px;white-space:pre-wrap;word-break:break-word;color:#1b1b18}
   .muted{color:var(--dim)}
   .empty{color:var(--dim);padding:40px 0;text-align:center}
+  aside::-webkit-scrollbar,main::-webkit-scrollbar{width:10px;height:10px}
+  aside::-webkit-scrollbar-thumb,main::-webkit-scrollbar-thumb{background:#dedbd4;border-radius:8px}
+  aside::-webkit-scrollbar-track,main::-webkit-scrollbar-track{background:transparent}
 </style>
 )HTML" R"HTML(</head>
 <body>
 <header>
+  <span class="brand">X</span>
   <h1>AgentXray</h1>
   <span class="hint">零改造 Agent 执行流程逆向 · 每 3 秒自动刷新</span>
   <span class="spacer"></span>
@@ -464,38 +486,38 @@ function chips(d) {
     if (i > 0) {
       const prev = rows[i - 1];
       const y1 = prev.y + STEPH, y2 = row.y;
-      g += `<line x1="${cx}" y1="${y1}" x2="${cx}" y2="${y2}" stroke="#3b4656" stroke-width="1.5" marker-end="url(#arr)"/>`;
-      if (s.fuzzy) g += `<text x="${cx + 8}" y="${(y1 + y2) / 2 + 4}" fill="#d29922" font-size="11">推测</text>`;
+      g += `<line x1="${cx}" y1="${y1}" x2="${cx}" y2="${y2}" stroke="#cfccc4" stroke-width="1.5" marker-end="url(#arr)"/>`;
+      if (s.fuzzy) g += `<text x="${cx + 8}" y="${(y1 + y2) / 2 + 4}" fill="#a06e00" font-size="11">推测</text>`;
     }
     // 明确失败（confirmed）红，仅按文本推断失败（inferred）琥珀
     const confirmed = s.failConfirmed > 0 || !!s.error;
     const inferred = !confirmed && s.failInferred > 0;
     const bad = confirmed || inferred;
-    const border = confirmed ? '#f85149' : ((inferred || s.fuzzy) ? '#d29922' : '#4c9aff');
-    g += `<rect x="0" y="${row.y}" width="${STEPW}" height="${STEPH}" rx="10" fill="${confirmed ? '#20151a' : (inferred ? '#221a0e' : '#151c26')}" stroke="${border}" stroke-width="${bad ? 2 : 1.5}" ${s.fuzzy && !bad ? 'stroke-dasharray="6 4"' : ''}/>`;
-    g += `<text x="12" y="${row.y + 22}" fill="#e6edf3" font-size="13" font-weight="600">Step ${i + 1}${confirmed ? ' · 受阻' : (inferred ? ' · 疑似受阻' : '')}</text>`;
+    const border = confirmed ? '#e5484d' : ((inferred || s.fuzzy) ? '#c89a3c' : '#3e63dd');
+    g += `<rect x="0" y="${row.y}" width="${STEPW}" height="${STEPH}" rx="10" fill="${confirmed ? '#fdf1f1' : (inferred ? '#fcf6e6' : '#ffffff')}" stroke="${border}" stroke-width="${bad ? 2 : 1.5}" ${s.fuzzy && !bad ? 'stroke-dasharray="6 4"' : ''}/>`;
+    g += `<text x="12" y="${row.y + 22}" fill="#1b1b18" font-size="13" font-weight="600">Step ${i + 1}${confirmed ? ' · 受阻' : (inferred ? ' · 疑似受阻' : '')}</text>`;
     if (s.model && s.model !== mainModel) {
-      g += `<text x="${STEPW - 10}" y="${row.y + 22}" text-anchor="end" fill="#d29922" font-size="11">${esc(s.model)}</text>`;
+      g += `<text x="${STEPW - 10}" y="${row.y + 22}" text-anchor="end" fill="#a06e00" font-size="11">${esc(s.model)}</text>`;
     }
-    g += `<text x="12" y="${row.y + 42}" fill="#8b98a9" font-size="11">${s.latencyMs}ms · ${s.tokensObserved === false ? 'token —' : s.tokens + ' tok'}${s.streamed ? ' · 流式' : ''}</text>`;
-    g += `<text x="12" y="${row.y + 60}" fill="#8b98a9" font-size="11">${esc((s.finishReason || '') + ' · 消息 ' + s.messages + ' · 工具定义 ' + s.toolDefs)}</text>`;
+    g += `<text x="12" y="${row.y + 42}" fill="#686864" font-size="11">${s.latencyMs}ms · ${s.tokensObserved === false ? 'token —' : s.tokens + ' tok'}${s.streamed ? ' · 流式' : ''}</text>`;
+    g += `<text x="12" y="${row.y + 60}" fill="#686864" font-size="11">${esc((s.finishReason || '') + ' · 消息 ' + s.messages + ' · 工具定义 ' + s.toolDefs)}</text>`;
     if (collapsed && s.tools.length) {
-      g += `<text x="${STEPW - 10}" y="${row.y + 42}" text-anchor="end" fill="${s.failConfirmed ? '#ff9d99' : (s.failInferred ? '#f0d795' : '#3fb950')}" font-size="11">${s.tools.length} 工具${s.failCount ? ' · ' + s.failCount + ' 失败' : ''}</text>`;
+      g += `<text x="${STEPW - 10}" y="${row.y + 42}" text-anchor="end" fill="${s.failConfirmed ? '#b42318' : (s.failInferred ? '#7a5200' : '#1f7a5c')}" font-size="11">${s.tools.length} 工具${s.failCount ? ' · ' + s.failCount + ' 失败' : ''}</text>`;
     }
     if (collapsed) return;
     s.tools.forEach((t, j) => {
       const ty = row.y + j * (TOOLH + TGAP);
-      g += `<line x1="${STEPW}" y1="${row.y + STEPH / 2}" x2="${X2}" y2="${ty + TOOLH / 2}" stroke="#3b4656" stroke-width="1.5" marker-end="url(#arr)"/>`;
+      g += `<line x1="${STEPW}" y1="${row.y + STEPH / 2}" x2="${X2}" y2="${ty + TOOLH / 2}" stroke="#cfccc4" stroke-width="1.5" marker-end="url(#arr)"/>`;
       const confirmed = t.errorKind === 'confirmed', inferred = t.errorKind === 'inferred';
-      const c = confirmed ? '#f85149' : (inferred ? '#d29922' : (t.hasResult ? '#3fb950' : '#55637a'));
-      g += `<rect x="${X2}" y="${ty}" width="${TOOLW}" height="${TOOLH}" rx="8" fill="${confirmed ? '#20151a' : (inferred ? '#221a0e' : '#131a22')}" stroke="${c}" stroke-width="1.5"><title>${esc(t.result || t.arguments || '')}</title></rect>`;
-      g += `<text x="${X2 + 12}" y="${ty + 22}" fill="${confirmed ? '#ffb3b0' : (inferred ? '#f0d795' : '#e6edf3')}" font-size="12" font-weight="600">${esc(t.name)}${confirmed ? ' · 失败' : (inferred ? ' · 疑似失败' : (t.hasResult ? '' : ' · 结果未观测'))}</text>`;
-      g += `<text x="${X2 + 12}" y="${ty + 40}" fill="#8b98a9" font-size="11">${t.durationSource === 'inferred' ? '~' : ''}${t.durationMs}ms · ${esc((t.arguments || '').slice(0, 40))}</text>`;
+      const c = confirmed ? '#e5484d' : (inferred ? '#c89a3c' : (t.hasResult ? '#2ca77f' : '#b5b2a9'));
+      g += `<rect x="${X2}" y="${ty}" width="${TOOLW}" height="${TOOLH}" rx="8" fill="${confirmed ? '#fdf1f1' : (inferred ? '#fcf6e6' : '#ffffff')}" stroke="${c}" stroke-width="1.5"><title>${esc(t.result || t.arguments || '')}</title></rect>`;
+      g += `<text x="${X2 + 12}" y="${ty + 22}" fill="${confirmed ? '#b42318' : (inferred ? '#7a5200' : '#1b1b18')}" font-size="12" font-weight="600">${esc(t.name)}${confirmed ? ' · 失败' : (inferred ? ' · 疑似失败' : (t.hasResult ? '' : ' · 结果未观测'))}</text>`;
+      g += `<text x="${X2 + 12}" y="${ty + 40}" fill="#686864" font-size="11">${t.durationSource === 'inferred' ? '~' : ''}${t.durationMs}ms · ${esc((t.arguments || '').slice(0, 40))}</text>`;
     });
   });
   return `<div class="flow"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
     <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
-      <path d="M0,0 L8,4 L0,8 z" fill="#3b4656"/></marker></defs>${g}</svg></div>`;
+      <path d="M0,0 L8,4 L0,8 z" fill="#cfccc4"/></marker></defs>${g}</svg></div>`;
 }
 
 function fmtMs(ms) {
@@ -554,22 +576,22 @@ function gantt(d) {
   let g = '';
   for (let k = 0; k <= 4; k++) {
     const ms = total * k / 4, x = px(ms);
-    g += `<line x1="${x}" y1="${top - 6}" x2="${x}" y2="${top + rows.length * rowH}" stroke="#1f2733"/>`;
-    g += `<text x="${x}" y="${top - 10}" fill="#6b7787" font-size="10" text-anchor="${k === 0 ? 'start' : (k === 4 ? 'end' : 'middle')}">${fmtMs(ms)}</text>`;
+    g += `<line x1="${x}" y1="${top - 6}" x2="${x}" y2="${top + rows.length * rowH}" stroke="#ebe9e3"/>`;
+    g += `<text x="${x}" y="${top - 10}" fill="#9c988f" font-size="10" text-anchor="${k === 0 ? 'start' : (k === 4 ? 'end' : 'middle')}">${fmtMs(ms)}</text>`;
   }
   rows.forEach((r, i) => {
     const y = top + i * rowH;
-    const color = r.ek === 'confirmed' ? '#f85149' : (r.ek === 'inferred' ? '#d29922' : (r.kind === 'llm' ? '#4c9aff' : '#3fb950'));
-    g += `<text x="0" y="${y + 14}" fill="${r.sub ? '#8b98a9' : '#e6edf3'}" font-size="11">${esc((r.sub ? '   ' : '') + r.label)}</text>`;
+    const color = r.ek === 'confirmed' ? '#e5484d' : (r.ek === 'inferred' ? '#d99a1f' : (r.kind === 'llm' ? '#3e63dd' : '#2ca77f'));
+    g += `<text x="0" y="${y + 14}" fill="${r.sub ? '#686864' : '#1b1b18'}" font-size="11">${esc((r.sub ? '   ' : '') + r.label)}</text>`;
     g += `<rect x="${px(r.start)}" y="${y + 4}" width="${pw(r.dur)}" height="${rowH - 9}" rx="3" fill="${color}" opacity="${r.kind === 'llm' ? 0.85 : 0.75}"><title>${esc(r.tip)}</title></rect>`;
   });
   if (total - measured > 2) {
-    g += `<rect x="${px(measured)}" y="${top}" width="${pw(total - measured)}" height="${rows.length * rowH - 4}" rx="3" fill="#2a3340" opacity="0.5"><title>未计入的间隙（网络 / 调度 / 客户端处理）</title></rect>`;
-    g += `<text x="${px(measured) + 6}" y="${top + 16}" fill="#8b98a9" font-size="10">间隙 ${fmtMs(total - measured)}</text>`;
+    g += `<rect x="${px(measured)}" y="${top}" width="${pw(total - measured)}" height="${rows.length * rowH - 4}" rx="3" fill="#d9d6cd" opacity="0.5"><title>未计入的间隙（网络 / 调度 / 客户端处理）</title></rect>`;
+    g += `<text x="${px(measured) + 6}" y="${top + 16}" fill="#686864" font-size="10">间隙 ${fmtMs(total - measured)}</text>`;
   }
   return `<div class="flow"><div class="gantt-head"><b>总耗时 ${fmtMs(total)}</b><span class="muted">模型 = 响应延迟；工具 = 上一条响应结束 → 下一条请求开始（推断）；同一 Step 内的工具同时起跑即并行</span></div>
     <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${g}</svg>
-    <div class="legend"><span><i style="background:#4c9aff"></i>模型调用</span><span><i style="background:#3fb950"></i>工具</span><span><i style="background:#f85149"></i>明确失败</span><span><i style="background:#d29922"></i>疑似失败（按结果文本推断）</span><span><i style="background:#2a3340"></i>未计入间隙</span></div></div>`;
+    <div class="legend"><span><i style="background:#3e63dd"></i>模型调用</span><span><i style="background:#2ca77f"></i>工具</span><span><i style="background:#e5484d"></i>明确失败</span><span><i style="background:#d99a1f"></i>疑似失败（按结果文本推断）</span><span><i style="background:#d9d6cd"></i>未计入间隙</span></div></div>`;
 }
 
 function stepsTable(d) {
