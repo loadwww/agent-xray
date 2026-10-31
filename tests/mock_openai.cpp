@@ -65,9 +65,15 @@ std::string toolDelta(int index, const std::string& id, const std::string& name,
 std::string buildSse(const std::string& text, bool withTool) {
     std::string out = sseEvent({{"role", "assistant"}, {"content", text}}, "");
     if (withTool) {
-        out += toolDelta(0, "call_1", "get_weather", "{\"ci");
-        out += toolDelta(0, "", "", "ty\":\"北");
-        out += toolDelta(0, "", "", "京\"}");
+        if (g_case == "secret") {
+            // WP4：工具参数里塞入密钥，验证 full 模式 sse_chunk 落盘前已脱敏
+            out += toolDelta(0, "call_1", "get_weather",
+                             "{\"city\":\"北京\",\"api_key\":\"sk-SECRETKEY0123456789ABCDEFGHIJ\"}");
+        } else {
+            out += toolDelta(0, "call_1", "get_weather", "{\"ci");
+            out += toolDelta(0, "", "", "ty\":\"北");
+            out += toolDelta(0, "", "", "京\"}");
+        }
     }
     out += sseEvent(nlohmann::json::object(), withTool ? "tool_calls" : "stop");
     nlohmann::json usage;
@@ -117,6 +123,11 @@ int main(int argc, char** argv) {
         g_case = "deep";
         res.set_content("{\"case\":\"deep\"}", "application/json");
     });
+    // WP4：SSE 工具参数里带密钥，用于验证流式落盘脱敏
+    svr.Get("/__case/secret", [](const httplib::Request&, httplib::Response& res) {
+        g_case = "secret";
+        res.set_content("{\"case\":\"secret\"}", "application/json");
+    });
 
     svr.Post("/v1/chat/completions", [](const httplib::Request& req, httplib::Response& res) {
         if (g_mode == "fail") {
@@ -145,7 +156,8 @@ int main(int argc, char** argv) {
                                          : 0;
         const bool stream = body.value("stream", false);
         // deep：前 3 轮都回 tool_calls（消息数 1/3/5），第 4 轮（7 条消息）回最终答案
-        const bool withTool = (g_case == "tool" && msgCount <= 2) || (g_case == "deep" && msgCount <= 6);
+        const bool withTool = (g_case == "tool" && msgCount <= 2) || (g_case == "deep" && msgCount <= 6) ||
+                              g_case == "secret";
 
         if (stream) {
             res.set_content(buildSse("北京", withTool), "text/event-stream");

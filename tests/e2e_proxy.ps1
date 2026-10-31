@@ -128,6 +128,19 @@ try {
     $ollamaRun = Get-Content (Join-Path $runOllama.FullName "run.json") -Raw | ConvertFrom-Json
     Check ($ollamaRun.steps.Count -ge 3) "ollama 前缀 run 还原步数 >= 3（实际 $($ollamaRun.steps.Count)）"
 
+    Write-Host "[3.9] WP4 流式 sse_chunk 落盘脱敏（客户端仍收原文）"
+    Invoke-WebRequest -Uri "http://127.0.0.1:9099/__case/secret" -TimeoutSec 5 -UseBasicParsing | Out-Null
+    $ErrorActionPreference = "Continue"
+    $secretOut = & $axr run --config $cfg --root $runsRoot -- $python $agent --stream 2>&1 | Out-String
+    $ErrorActionPreference = "Stop"
+    Check ($LASTEXITCODE -eq 0) "secret 流式 axr run 退出码 0"
+    Check ($secretOut -match "sse has secret = True") "客户端收到的 SSE 仍是原文（含密钥）"
+    $runSecret = NewestRun
+    $eventsSecret = Join-Path $runSecret.FullName "events.jsonl"
+    $secretHits = (Select-String -Path $eventsSecret -Pattern "sk-SECRETKEY0123456789ABCDEFGHIJ" -AllMatches).Count
+    Check (($null -eq $secretHits) -or ($secretHits -eq 0)) "full 模式 sse_chunk 已脱敏"
+    Invoke-WebRequest -Uri "http://127.0.0.1:9099/__case/deep" -TimeoutSec 5 -UseBasicParsing | Out-Null
+
     Write-Host "[4] axr serve：前台代理 + 路由转发 + 未匹配 404"
     $serveRoot = Join-Path $build "e2e-serve"
     if (Test-Path $serveRoot) { Remove-Item -Recurse -Force $serveRoot }

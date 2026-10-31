@@ -67,15 +67,19 @@ def main():
             te = resp.headers.get("Transfer-Encoding", "-")
             chunks = 0
             total = 0
+            raw = b""
             while True:
                 piece = resp.read(200)
                 if not piece:
                     break
                 chunks += 1
                 total += len(piece)
+                raw += piece
         # 代理 S2 边收边发时是 chunked；S1 缓冲实现会是定长
         print("[agent] transfer-encoding =", te)
         print("[agent] sse bytes =", total, "chunks =", chunks)
+        # WP4：录制侧脱敏后，客户端仍应收到原文（含密钥）
+        print("[agent] sse has secret =", "sk-SECRETKEY0123456789ABCDEFGHIJ" in raw.decode("utf-8", "replace"))
         return 0
 
     messages = [{"role": "user", "content": "帮我查一下北京今天天气"}]

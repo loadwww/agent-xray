@@ -123,6 +123,17 @@ RUN4=${RUN4%/}
 OLLAMA_STEPS=$("$PYTHON" -c "import json,sys;print(len(json.load(open(sys.argv[1]))['steps']))" "$RUN4/run.json" 2>/dev/null)
 [ "${OLLAMA_STEPS:-0}" -ge 3 ]; check "$?" "ollama 前缀 run 还原步数 >= 3（实际 ${OLLAMA_STEPS:-0}）"
 
+echo "[5] WP4 流式 sse_chunk 落盘脱敏（客户端仍收原文）"
+curl -s -m 5 "http://127.0.0.1:9099/__case/secret" >/dev/null
+SECRET_OUT=$("$AXR" run --config "$CFG" --root "$RUNS_ROOT" -- "$PYTHON" "$AGENT" --stream 2>&1)
+check "$?" "secret 流式 axr run 退出码 0"
+echo "$SECRET_OUT" | grep -q "sse has secret = True"
+check "$?" "客户端收到的 SSE 仍是原文（含密钥）"
+RUN5=$(newest_run)
+RUN5=${RUN5%/}
+[ "$(grep -c "sk-SECRETKEY0123456789ABCDEFGHIJ" "$RUN5/events.jsonl" || true)" -eq 0 ]
+check "$?" "full 模式 sse_chunk 已脱敏"
+
 if [ "$FAIL" -gt 0 ]; then
     echo
     echo "结果: $FAIL 项失败"
