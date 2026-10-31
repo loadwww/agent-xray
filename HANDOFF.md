@@ -94,6 +94,14 @@ cmake --build build -j
 - 双平台 CI 从未绿过，两条根因：windows job 实为 PowerShell 5.1 执行 build.ps1，无 BOM 的 UTF-8 在 cp1252 下中文注释字节变弯引号导致解析失败 → 补 UTF-8 BOM；linux job 缺 libcurl 开发包 → ci.yml 加 apt 步骤
 - 现在 windows + linux 两个 job 全绿（linux 1m0s / windows 1m47s）
 
+### P2-7 工具失败判定分级 — commit `43ae5a0`
+- `ToolExec.isError` → `errorKind = none|inferred|confirmed`；判定下沉到 `chain/superstep.cpp::classifyToolError`：
+  结果 JSON `error` / 协议层 `is_error` → `confirmed`，文本词表命中 → `inferred`
+- 内置词表从 webui 迁入链层；`proxy.tool_error_patterns`（行内/多行列表）非空时整体覆盖内置词表
+- Web UI：confirmed 红 / inferred 琥珀（流程图、甘特、标签、详情、横幅）；mermaid 两类都标 fail；旧 run.json 的 `is_error` 回退映射为 confirmed
+- 顺带修复：`upstreams:` 列表之后的 proxy 键（如 `inject_usage`）被吞进最后一个 upstream 的问题
+- 验收：Windows / WSL Linux selftest 229 全过
+
 ## 三、关键代码事实（供下一个对话快速定位）
 
 - 转发层平台实现：`src/proxy/forward_winhttp.cpp`（`#ifdef _WIN32`）+ `src/proxy/forward_curl.cpp`（其它平台，libcurl）
@@ -110,7 +118,9 @@ cmake --build build -j
 ### 第二批（已完成，见第二节）
 
 ### 第三批（P2-7 ~ P2-12 低成本准确性）
-- **P2-7 工具失败判定分级**：`ToolExec.errorKind = none|inferred|confirmed`；判定顺序 JSON error → 协议层 is_error → 文本启发式；UI confirmed 红 / inferred 琥珀；词表可配 `proxy.tool_error_patterns`
+
+> P2-7 已完成（见第二节）。
+
 - **P2-8 inject_usage 默认开 + 自动降级**：默认 true；上游 400 含 stream_options 字样时去掉重试，meta 记 `usage_injected:false`
 - **P2-9 区分 0 token 与未观测**：`Usage.observed`；!observed 显示 "—"
 - **P2-10 run id 防撞**：追加 4 位随机或 session 序号（如 `...-f33017ac-7d2e`）；selftest id 断言同步更新；旧 id 仍可读
