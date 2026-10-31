@@ -1,14 +1,16 @@
 ﻿# M2 离线验收：mock 上游 -> axr run 录制 -> events/run.json/graph.mmd -> replay
 # 用法: powershell -ExecutionPolicy Bypass -File tests\e2e_proxy.ps1
+# 环境覆盖：AXR_BUILD_DIR 指定构建目录，AXR_PYTHON 指定 python 解释器，
+#          AXR_ENV 指定需 dot-source 的环境脚本（如激活虚拟环境）；未设置用默认值
 $ErrorActionPreference = "Stop"
 
-$envScript = if ($env:AXR_ENV) { $env:AXR_ENV } else { "D:\env\axr\env.ps1" }
-if (Test-Path $envScript) { . $envScript | Out-Null }
+if ($env:AXR_ENV) { . $env:AXR_ENV | Out-Null }
 
 $root = Split-Path -Parent $PSScriptRoot
-$build = Join-Path $root "build"
+$build = if ($env:AXR_BUILD_DIR) { $env:AXR_BUILD_DIR } else { Join-Path $root "build" }
 $axr = Join-Path $build "axr.exe"
 $mockExe = Join-Path $build "mock_openai.exe"
+$python = if ($env:AXR_PYTHON) { $env:AXR_PYTHON } else { "python" }
 $cfg = Join-Path $root "tests\proxy_test.yaml"
 $agent = Join-Path $root "tests\fake_agent.py"
 $runsRoot = Join-Path $build "e2e-runs"
@@ -42,7 +44,7 @@ try {
     if (-not $ready) { throw "mock_openai 未就绪" }
 
     Write-Host "[1] axr run：非流式，3 轮工具调用 + 最终回答"
-    & $axr run --config $cfg --root $runsRoot -- python $agent
+    & $axr run --config $cfg --root $runsRoot -- $python $agent
     Check ($LASTEXITCODE -eq 0) "axr run 退出码 0"
 
     $run1 = NewestRun
@@ -78,12 +80,16 @@ try {
     Check ($graphText -match "S2") "graph.mmd 至少 3 个步骤节点"
 
     Write-Host "[2] axr replay：从 events.jsonl 重算"
+    $ErrorActionPreference = "Continue"   # PS 5.1：原生 stderr 经 2>&1 会变 ErrorRecord，Stop 模式会抛 NativeCommandError
     $replayOut = & $axr replay $run1.FullName --format text 2>&1
+    $ErrorActionPreference = "Stop"
     Check ($LASTEXITCODE -eq 0) "replay 退出码 0"
     Check (($replayOut -join "`n") -match "Run: ") "replay 打印出 run"
 
     Write-Host "[3] axr run：流式（S2 边收边发 + 逐 chunk 录制）"
-    $streamOut = & $axr run --config $cfg --root $runsRoot -- python $agent --stream 2>&1 | Out-String
+    $ErrorActionPreference = "Continue"
+    $streamOut = & $axr run --config $cfg --root $runsRoot -- $python $agent --stream 2>&1 | Out-String
+    $ErrorActionPreference = "Stop"
     Check ($LASTEXITCODE -eq 0) "流式 axr run 退出码 0"
     Check ($streamOut -match "transfer-encoding = chunked") "S2 流式响应为 chunked（不是缓冲后一次性返回）"
     Check ($streamOut -match "sse bytes = (\d+)") "客户端收到 SSE 数据"
