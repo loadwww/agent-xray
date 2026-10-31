@@ -12,9 +12,10 @@
 namespace axr {
 namespace {
 
-// axr report 的参数：目标 + --out / --config / --root
+// axr report 的参数：目标 + --run / --out / --config / --root
 struct ReportOpts {
     std::string target;
+    std::string runId; // --run：为指定 run 生成报告（缺省主 run）
     std::string out;
     ProxyCliOpts cfgOpts;
 };
@@ -23,6 +24,7 @@ Status parseReportArgs(const std::vector<std::string>& args, ReportOpts& out) {
     for (std::size_t i = 0; i < args.size(); ++i) {
         const std::string& a = args[i];
         if (a == "--out" && i + 1 < args.size()) out.out = args[++i];
+        else if (a == "--run" && i + 1 < args.size()) out.runId = args[++i];
         else if (a == "--config" && i + 1 < args.size()) out.cfgOpts.configPath = args[++i];
         else if (a == "--root" && i + 1 < args.size()) out.cfgOpts.rootDir = args[++i];
         else if (!a.empty() && a[0] == '-') return Status::Fail("未知选项: " + a);
@@ -39,7 +41,8 @@ int cmdReport(const std::vector<std::string>& args) {
     ReportOpts opts;
     Status st = parseReportArgs(args, opts);
     if (!st.ok()) {
-        std::cerr << st.err << "\n用法: axr report <run目录|events.jsonl|runID> [--out file] [--config config.yaml]\n";
+        std::cerr << st.err
+                  << "\n用法: axr report <run目录|events.jsonl|runID> [--run runId] [--out file] [--config config.yaml]\n";
         return 2;
     }
 
@@ -54,9 +57,15 @@ int cmdReport(const std::vector<std::string>& args) {
         std::cerr << chain.err << "\n";
         return 1;
     }
-    const Run* run = primaryRun(chain.value);
+    const Run* run = opts.runId.empty() ? primaryRun(chain.value) : findRunById(chain.value, opts.runId);
     if (!run) {
-        std::cerr << "未从 " << target << " 中还原出任何 run\n";
+        if (!opts.runId.empty()) {
+            std::cerr << "找不到 run: " << opts.runId << "（该 session 的 run:";
+            for (const auto& x : chain.value.runs) std::cerr << " " << x.id;
+            std::cerr << "）\n";
+        } else {
+            std::cerr << "未从 " << target << " 中还原出任何 run\n";
+        }
         return 1;
     }
 

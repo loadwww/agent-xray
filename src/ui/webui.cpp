@@ -159,6 +159,21 @@ nlohmann::json runToJson(Run& run, const Config& cfg, bool live) {
     return j;
 }
 
+// run 摘要（侧栏折叠组 / meta.runs 同款字段）
+nlohmann::json runBriefUiJson(const Run& r) {
+    int tools = 0;
+    for (const auto& s : r.steps) tools += static_cast<int>(s.tools.size());
+    return nlohmann::json{{"id", r.id},
+                          {"startedAt", r.startedAt},
+                          {"steps", static_cast<int>(r.steps.size())},
+                          {"tools", tools},
+                          {"tokens", r.total.promptTokens + r.total.completionTokens},
+                          {"incomplete", r.incomplete},
+                          {"requests", r.requestCount},
+                          {"retries", r.retryCount},
+                          {"fuzzyEdges", r.fuzzyEdges}};
+}
+
 // 未收尾的 run 还没有 meta.json，列表里现算一份摘要（否则侧栏只会显示 0 步 / unknown）
 nlohmann::json liveSummary(const std::string& runDir, const Config& cfg) {
     nlohmann::json j;
@@ -184,7 +199,34 @@ nlohmann::json liveSummary(const std::string& runDir, const Config& cfg) {
         if (std::find(models.begin(), models.end(), s.call.model) == models.end()) models.push_back(s.call.model);
     }
     j["models"] = models;
+    // 实时模式：多 run 直接平铺（不落盘 run-<i>.json）
+    j["primary"] = p->id;
+    j["runCount"] = static_cast<int>(chain.value.runs.size());
+    nlohmann::json runs = nlohmann::json::array();
+    for (const auto& r : chain.value.runs) runs.push_back(runBriefUiJson(r));
+    j["runs"] = std::move(runs);
     return j;
+}
+
+// 已收尾 session：把 runId 映射到落盘文件（主 run=run.json，第 i 条非主 run=run-<i>.json，
+// 顺序与 finalize 写盘一致——都按 runs 数组顺序跳过主 run）。找不到返回空串。
+std::string resolveRunFile(const std::string& runDir, const std::string& runId) {
+    if (runId.empty()) return "run.json"; // 缺省主 run，旧目录可能没有 meta.json
+    const std::string raw = readAll((std::filesystem::path(runDir) / "meta.json").string());
+    if (raw.empty()) return "";
+    const nlohmann::json meta = nlohmann::json::parse(raw, nullptr, false);
+    if (meta.is_discarded()) return "";
+    const std::string primary = meta.value("primary", "");
+    if (runId == primary) return "run.json";
+    if (!meta.contains("runs") || !meta["runs"].is_array()) return "";
+    int idx = 0;
+    for (const auto& x : meta["runs"]) {
+        const std::string rid = x.value("id", "");
+        if (rid.empty() || rid == primary) continue;
+        if (rid == runId) return "run-" + std::to_string(idx) + ".json";
+        ++idx;
+    }
+    return "";
 }
 
 } // namespace
@@ -216,6 +258,9 @@ WebResponse webUiPage() {
   .run-item.active{background:#1d2836;border-left:3px solid var(--accent);padding-left:11px}
   .run-item .id{font-family:Consolas,monospace;font-size:12px}
   .run-item .meta{font-size:11px;color:var(--dim);margin-top:2px}
+  .run-item.sub{padding:7px 14px 7px 26px}
+  .run-group{padding:3px 14px;font-size:11px;color:var(--dim);cursor:pointer;user-select:none}
+  .run-group:hover{color:var(--fg)}
   main{padding:18px 22px;overflow:auto}
   .chips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 16px}
   .chip{background:var(--panel2);border:1px solid var(--line);border-radius:999px;padding:4px 10px;font-size:12px;color:var(--dim)}
@@ -273,7 +318,8 @@ const countEl = document.getElementById('count');
 const toggleEl = document.getElementById('toggle');
 const wantId = new URLSearchParams(location.search).get('id');
 const wantCollapse = new URLSearchParams(location.search).get('collapse') === '1';
-let runs = [], selected = null, lastKey = '', lastData = null, collapsed = wantCollapse;
+let runs = [], selected = null, selectedRun = '', lastKey = '', lastData = null, collapsed = wantCollapse;
+const expanded = {}; // sessionId → 多 run 折叠组是否展开
 if (collapsed) toggleEl.textContent = '展开工具调用';
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -286,14 +332,30 @@ async function api(path) {
 function renderList() {
   countEl.textContent = runs.length ? runs.length + ' 个' : '';
   if (!runs.length) { listEl.innerHTML = '<div class="empty">还没有 run</div>'; return; }
-  listEl.innerHTML = runs.map(r => `
-    <div class="run-item ${r.id === selected ? 'active' : ''}" data-id="${esc(r.id)}">
+  listEl.innerHTML = runs.map(r => {
+    let html = `
+    <div class="run-item ${r.id === selected && !selectedRun ? 'active' : ''}" data-id="${esc(r.id)}">
       <div class="id">${esc(r.id)}${r.live ? ' <span class="tag live">' + esc(r.status) + '</span>' : ''}</div>
       <div class="meta">${esc(r.startedAt || '')} · ${r.steps} 步 · ${r.tools} 工具 · ${r.tokens} tok</div>
       <div class="meta">${esc(r.status)}${r.incomplete ? ' · 不完整' : ''}${r.failTools ? ' · <span class="bad">' + r.failTools + ' 失败</span>' : ''}</div>
-    </div>`).join('');
+    </div>`;
+    if (r.runCount > 1 && r.runs) {
+      html += `<div class="run-group" data-gid="${esc(r.id)}">${expanded[r.id] ? '▾' : '▸'} 共 ${r.runCount} 个 run</div>`;
+      if (expanded[r.id]) {
+        html += r.runs.map(sr => `
+        <div class="run-item sub ${r.id === selected && selectedRun === sr.id ? 'active' : ''}" data-id="${esc(r.id)}" data-run="${esc(sr.id)}">
+          <div class="id">${esc(sr.id)}${sr.id === r.primary ? ' <span class="tag">主</span>' : ''}</div>
+          <div class="meta">${sr.steps} 步 · ${sr.tools} 工具 · ${sr.tokens} tok${sr.incomplete ? ' · 不完整' : ''}</div>
+        </div>`).join('');
+      }
+    }
+    return html;
+  }).join('');
   listEl.querySelectorAll('.run-item').forEach(el => {
-    el.onclick = () => { selected = el.dataset.id; lastKey = ''; renderList(); loadRun(); };
+    el.onclick = () => { selected = el.dataset.id; selectedRun = el.dataset.run || ''; lastKey = ''; renderList(); loadRun(); };
+  });
+  listEl.querySelectorAll('.run-group').forEach(el => {
+    el.onclick = () => { expanded[el.dataset.gid] = !expanded[el.dataset.gid]; renderList(); };
   });
 }
 
@@ -313,7 +375,7 @@ async function loadRuns() {
 async function loadRun() {
   if (!selected) return;
   let d;
-  try { d = await api('/__xray/api/run?id=' + encodeURIComponent(selected)); } catch (e) { return; }
+  try { d = await api('/__xray/api/run?id=' + encodeURIComponent(selected) + (selectedRun ? '&run=' + encodeURIComponent(selectedRun) : '')); } catch (e) { return; }
   if (d.error) { mainEl.innerHTML = '<div class="banner bad">' + esc(d.error) + '</div>'; return; }
   const key = d.id + '|' + d.steps.length + '|' + d.endedAt + '|' + d.live + '|' + d.total.tokens + '|' + d.failTools;
   if (key === lastKey) return;
@@ -538,6 +600,24 @@ WebResponse webUiRuns(const Config& cfg) {
         j["retries"] = m.retryCount;
         j["tokens"] = m.totalTokens;
         j["models"] = m.models;
+        // 多 run：侧栏折叠组用；旧 meta（无 runs 字段）按单 run 处理
+        j["primary"] = m.primary;
+        j["runCount"] = m.runs.empty() ? 1 : static_cast<int>(m.runs.size());
+        if (!m.runs.empty()) {
+            nlohmann::json briefs = nlohmann::json::array();
+            for (const auto& b : m.runs) {
+                briefs.push_back({{"id", b.id},
+                                  {"startedAt", b.startedAt},
+                                  {"steps", b.steps},
+                                  {"tools", b.tools},
+                                  {"tokens", b.tokens},
+                                  {"incomplete", b.incomplete},
+                                  {"requests", b.requests},
+                                  {"retries", b.retries},
+                                  {"fuzzyEdges", b.fuzzyEdges}});
+            }
+            j["runs"] = std::move(briefs);
+        }
         if (!m.hasMeta) {
             // 还在采集中（或 axr 被强杀、没来得及收尾）：现算，让侧栏有真实数值
             const auto s = liveSummary(m.path, cfg);
@@ -554,7 +634,7 @@ WebResponse webUiRuns(const Config& cfg) {
     return r;
 }
 
-WebResponse webUiRun(const Config& cfg, const std::string& id) {
+WebResponse webUiRun(const Config& cfg, const std::string& id, const std::string& runId) {
     WebResponse r;
     auto fail = [&](int status, const std::string& msg) {
         r.status = status;
@@ -562,14 +642,18 @@ WebResponse webUiRun(const Config& cfg, const std::string& id) {
         return r;
     };
     if (!validRunId(id)) return fail(400, "非法 run id");
+    if (!runId.empty() && !validRunId(runId)) return fail(400, "非法 run id");
 
     const std::string runDir = (std::filesystem::path(cfg.storage.root) / "runs" / id).string();
     if (!std::filesystem::is_directory(runDir)) return fail(404, "找不到 run: " + id);
 
-    // 已落盘：直接读 run.json（字段最全）
-    const std::string runJsonPath = (std::filesystem::path(runDir) / "run.json").string();
-    const std::string raw = readAll(runJsonPath);
-    if (!raw.empty()) {
+    // 已落盘：直接读 run.json / run-<i>.json（字段最全）
+    const std::string rawPrimary = readAll((std::filesystem::path(runDir) / "run.json").string());
+    if (!rawPrimary.empty()) {
+        const std::string file = resolveRunFile(runDir, runId);
+        if (file.empty()) return fail(404, "找不到 run: " + runId);
+        const std::string raw =
+            file == "run.json" ? rawPrimary : readAll((std::filesystem::path(runDir) / file).string());
         Run run;
         try {
             run = nlohmann::json::parse(raw).get<Run>();
@@ -583,9 +667,12 @@ WebResponse webUiRun(const Config& cfg, const std::string& id) {
     // 采集中：直接从 events.jsonl 实时还原
     auto chain = buildChainFromEvents(runDir, cfg.chainOptions());
     if (!chain.ok()) return fail(500, "建链失败: " + chain.err);
-    const Run* primary = primaryRun(chain.value);
-    if (primary == nullptr) return fail(200, "尚未捕获到完整的 LLM 调用");
-    Run copy = *primary;
+    const Run* sel = runId.empty() ? primaryRun(chain.value) : findRunById(chain.value, runId);
+    if (sel == nullptr) {
+        if (!runId.empty()) return fail(404, "找不到 run: " + runId);
+        return fail(200, "尚未捕获到完整的 LLM 调用");
+    }
+    Run copy = *sel;
     r.body = runToJson(copy, cfg, true).dump();
     return r;
 }

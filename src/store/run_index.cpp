@@ -46,6 +46,23 @@ void readMetaFile(const std::string& metaPath, RunMeta& m) {
     m.retryCount = j.value("retry_count", 0);
     m.totalTokens = j.value("total_tokens", 0);
     m.reportPath = j.value("report", "");
+    m.primary = j.value("primary", "");
+    if (j.contains("runs") && j["runs"].is_array()) {
+        for (const auto& x : j["runs"]) {
+            if (!x.is_object()) continue;
+            RunBrief b;
+            b.id = x.value("id", "");
+            b.startedAt = x.value("started_at", "");
+            b.steps = x.value("steps", 0);
+            b.tools = x.value("tools", 0);
+            b.tokens = x.value("tokens", 0);
+            b.requests = x.value("requests", 0);
+            b.retries = x.value("retries", 0);
+            b.fuzzyEdges = x.value("fuzzy_edges", 0);
+            b.incomplete = x.value("incomplete", false);
+            if (!b.id.empty()) m.runs.push_back(std::move(b));
+        }
+    }
     if (j.contains("models") && j["models"].is_array()) {
         for (const auto& x : j["models"])
             if (x.is_string()) m.models.push_back(x.get<std::string>());

@@ -7,6 +7,19 @@
 
 namespace axr {
 
+// meta.json runs[] 里的一条摘要（同一 session 可能被切成多个 run：子 agent / 第二个任务）
+struct RunBrief {
+    std::string id;
+    std::string startedAt;
+    int steps = 0;
+    int tools = 0;
+    int tokens = 0;
+    int requests = 0;
+    int retries = 0;
+    int fuzzyEdges = 0;
+    bool incomplete = false;
+};
+
 struct RunMeta {
     std::string dirName;   // <root>/runs 下的目录名（即 sessionId）
     std::string path;      // 目录绝对/相对路径
@@ -23,6 +36,8 @@ struct RunMeta {
     int totalTokens = 0;
     std::vector<std::string> models;
     std::string reportPath;
+    std::string primary;          // 主 run 的 runId（meta.json 的 primary，旧 meta 可能为空）
+    std::vector<RunBrief> runs;   // 该 session 全部 run 的摘要（旧 meta 无此字段则为空）
     double ageDays = 0.0; // 目录 mtime 距今天数
 };
 

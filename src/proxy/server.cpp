@@ -194,7 +194,7 @@ void ReverseProxySource::handle(const httplib::Request& req, httplib::Response& 
         } else if (req.path == "/__xray/api/runs") {
             wr = webUiRuns(cfg_);
         } else if (req.path == "/__xray/api/run") {
-            wr = webUiRun(cfg_, req.get_param_value("id"));
+            wr = webUiRun(cfg_, req.get_param_value("id"), req.get_param_value("run"));
         } else if (webUiWantsHtml(req.path, req.get_header_value("Accept"))) {
             wr = webUiPage();
         } else {

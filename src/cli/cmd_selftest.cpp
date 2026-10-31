@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -24,6 +25,7 @@
 #include "proxy/redact.h"
 #include "proxy/route.h"
 #include "store/events_reader.h"
+#include "store/finalize.h"
 #include "store/run_dir.h"
 #include "store/run_index.h"
 #include "ui/report.h"
@@ -489,7 +491,7 @@ void testWebUi(TestCtx& t, const std::string& fixturesDir) {
     t.check(list.is_array() && list.size() == 1, "UI runs 列出 1 个 run");
     if (list.is_array() && !list.empty()) t.check(list[0]["id"] == "20261030-120000-abcd", "UI runs id 正确");
 
-    auto detail = webUiRun(cfg, "20261030-120000-abcd");
+    auto detail = webUiRun(cfg, "20261030-120000-abcd", "");
     t.check(detail.status == 200, "UI run 明细 200");
     auto d = nlohmann::json::parse(detail.body, nullptr, false);
     t.check(d.is_object() && d.contains("steps") && d["steps"].is_array(), "UI run 明细含 steps");
@@ -550,7 +552,7 @@ void testWebUi(TestCtx& t, const std::string& fixturesDir) {
         r.steps = {s};
         writeTextFile((errDir / "run.json").string(), nlohmann::json(r).dump(2));
 
-        auto d3 = webUiRun(cfg, "20261030-121500-errr");
+        auto d3 = webUiRun(cfg, "20261030-121500-errr", "");
         auto j3 = nlohmann::json::parse(d3.body, nullptr, false);
         t.check(d3.status == 200 && j3.contains("failTools"), "UI 失败 run 明细可读");
         t.check(j3["failTools"].get<int>() == 2, "UI 403 / Failed to 结果都计入失败工具");
@@ -560,8 +562,8 @@ void testWebUi(TestCtx& t, const std::string& fixturesDir) {
         t.check(j3["steps"][0]["tools"][1]["isError"].get<bool>(), "UI Failed to 工具标记为失败");
     }
 
-    t.check(webUiRun(cfg, "../etc").status == 400, "UI run 拒绝路径穿越 id");
-    t.check(webUiRun(cfg, "nope").status == 404, "UI run 未知 id 返回 404");
+    t.check(webUiRun(cfg, "../etc", "").status == 400, "UI run 拒绝路径穿越 id");
+    t.check(webUiRun(cfg, "nope", "").status == 404, "UI run 未知 id 返回 404");
 
     std::filesystem::remove_all(tmp);
 }
@@ -658,6 +660,84 @@ int cmdSelftest(const std::vector<std::string>& args) {
         t.check(allTwoSteps, "T14 每个 run 各 2 步");
         t.check(allComplete, "T14 两个 run 均完整（无 incomplete）");
     });
+
+    // P0-2 多 run 输出：meta 登记全部 run、非主 run 落盘 run-<i>.json、CLI/UI 可按 id 访问
+    {
+        namespace fs = std::filesystem;
+        const fs::path tmp = fs::temp_directory_path() / ("axr-p02-" + makeSessionId());
+        const fs::path sessionDir = tmp / "runs" / "20261030-150000-p02x";
+        fs::create_directories(sessionDir);
+        fs::copy_file(dir + "/t14_two_tasks_same_system/events.jsonl", sessionDir / "events.jsonl");
+
+        Config cfg = defaultConfig();
+        cfg.storage.root = tmp.string();
+
+        auto chain = buildChainFromEvents(sessionDir.string());
+        t.check(chain.ok() && chain.value.runs.size() == 2, "P0-2 建链得到 2 个 run");
+        const Run* primary = chain.ok() ? primaryRun(chain.value) : nullptr;
+        std::string otherId;
+        if (primary) {
+            for (const auto& r : chain.value.runs)
+                if (r.id != primary->id) otherId = r.id;
+        }
+        t.check(primary != nullptr && !otherId.empty(), "P0-2 找到主 run 与非主 run");
+        t.check(findRunById(chain.value, otherId) != nullptr, "P0-2 findRunById 命中非主 run");
+        t.check(findRunById(chain.value, "no-such-run") == nullptr, "P0-2 findRunById 未命中返回空");
+
+        const RunSummary s = finalizeRun(sessionDir.string(), cfg, 0);
+        t.check(s.status == "complete", "P0-2 finalize 主 run 完整");
+
+        nlohmann::json meta;
+        {
+            std::ifstream in((sessionDir / "meta.json").string());
+            in >> meta;
+        }
+        t.check(meta.value("primary", "") == (primary ? primary->id : ""), "P0-2 meta.primary 指向主 run");
+        t.check(meta.contains("runs") && meta["runs"].size() == chain.value.runs.size(),
+                "P0-2 meta.runs 数量与建链结果一致");
+        bool briefOk = true;
+        for (const auto& b : meta["runs"]) {
+            if (b.value("id", "").empty() || b.value("steps", 0) != 2) briefOk = false;
+        }
+        t.check(briefOk, "P0-2 meta.runs 摘要字段齐全（id/steps）");
+
+        // 非主 run 落盘 run-0.json，内容是完整 Run JSON
+        const fs::path secondary = sessionDir / "run-0.json";
+        t.check(fs::exists(secondary), "P0-2 非主 run 落盘 run-0.json");
+        Run secondaryRun;
+        bool parsed = false;
+        try {
+            std::ifstream in(secondary.string());
+            secondaryRun = nlohmann::json::parse(in).get<Run>();
+            parsed = true;
+        } catch (...) {
+        }
+        t.check(parsed && secondaryRun.id == otherId, "P0-2 run-0.json 即非主 run");
+        t.check(parsed && secondaryRun.steps.size() == 2, "P0-2 run-0.json 含 2 个 Step");
+
+        // listRuns 能读回多 run 摘要
+        auto listed = listRuns(tmp.string());
+        t.check(listed.ok() && listed.value.size() == 1, "P0-2 listRuns 1 个目录");
+        if (listed.ok() && !listed.value.empty()) {
+            const RunMeta& rm = listed.value[0];
+            t.check(rm.runs.size() == 2 && !rm.primary.empty(), "P0-2 listRuns 解析 primary 与 runs");
+        }
+
+        // Web UI：runs 列表带 runCount/runs，run 明细可按 run 参数取非主 run
+        auto list2 = nlohmann::json::parse(webUiRuns(cfg).body, nullptr, false);
+        t.check(list2.is_array() && list2.size() == 1 && list2[0].value("runCount", 0) == 2 &&
+                    list2[0].contains("runs") && list2[0]["runs"].size() == 2,
+                "P0-2 UI runs 带 runCount 与 runs 摘要");
+        auto d2 = webUiRun(cfg, "20261030-150000-p02x", otherId);
+        t.check(d2.status == 200, "P0-2 UI 按 run 参数取非主 run 200");
+        auto j2 = nlohmann::json::parse(d2.body, nullptr, false);
+        t.check(j2.value("id", "") == otherId && j2.contains("steps") && j2["steps"].size() == 2,
+                "P0-2 UI 非主 run 明细内容正确");
+        t.check(webUiRun(cfg, "20261030-150000-p02x", "no-such-run").status == 404,
+                "P0-2 UI 未知 run id 返回 404");
+
+        fs::remove_all(tmp);
+    }
 
     // 30 条请求的长链
     testFixture(dir, "deepseek_tool_2", t, [&](const ChainResult& cr) {

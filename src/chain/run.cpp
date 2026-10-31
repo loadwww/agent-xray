@@ -170,4 +170,10 @@ const Run* primaryRun(const ChainResult& cr) {
     return best;
 }
 
+const Run* findRunById(const ChainResult& cr, const std::string& id) {
+    for (const auto& r : cr.runs)
+        if (r.id == id) return &r;
+    return nullptr;
+}
+
 } // namespace axr

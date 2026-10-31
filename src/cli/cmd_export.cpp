@@ -15,6 +15,7 @@ namespace {
 
 struct ExportOpts {
     std::string target;
+    std::string runId; // --run：导出指定 run（缺省主 run）
     std::string format; // mermaid | json
     std::string out;
     ProxyCliOpts cfgOpts;
@@ -24,6 +25,7 @@ Status parseExportArgs(const std::vector<std::string>& args, ExportOpts& out) {
     for (std::size_t i = 0; i < args.size(); ++i) {
         const std::string& a = args[i];
         if (a == "--format" && i + 1 < args.size()) out.format = args[++i];
+        else if (a == "--run" && i + 1 < args.size()) out.runId = args[++i];
         else if (a == "--out" && i + 1 < args.size()) out.out = args[++i];
         else if (a == "--config" && i + 1 < args.size()) out.cfgOpts.configPath = args[++i];
         else if (a == "--root" && i + 1 < args.size()) out.cfgOpts.rootDir = args[++i];
@@ -43,7 +45,8 @@ int cmdExport(const std::vector<std::string>& args) {
     ExportOpts opts;
     Status st = parseExportArgs(args, opts);
     if (!st.ok()) {
-        std::cerr << st.err << "\n用法: axr export <run目录|events.jsonl|runID> --format mermaid|json [--out file]\n";
+        std::cerr << st.err
+                  << "\n用法: axr export <run目录|events.jsonl|runID> --format mermaid|json [--run runId] [--out file]\n";
         return 2;
     }
 
@@ -58,9 +61,15 @@ int cmdExport(const std::vector<std::string>& args) {
         std::cerr << chain.err << "\n";
         return 1;
     }
-    const Run* found = primaryRun(chain.value);
+    const Run* found = opts.runId.empty() ? primaryRun(chain.value) : findRunById(chain.value, opts.runId);
     if (!found) {
-        std::cerr << "未从 " << target << " 中还原出任何 run\n";
+        if (!opts.runId.empty()) {
+            std::cerr << "找不到 run: " << opts.runId << "（该 session 的 run:";
+            for (const auto& x : chain.value.runs) std::cerr << " " << x.id;
+            std::cerr << "）\n";
+        } else {
+            std::cerr << "未从 " << target << " 中还原出任何 run\n";
+        }
         return 1;
     }
 

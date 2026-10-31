@@ -27,4 +27,7 @@ ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts = Ch
 // 主 run：步数最多的那条（并列取最早）；用于 report / export / diff
 const Run* primaryRun(const ChainResult& cr);
 
+// 按 run id 精确查找（--run / Web UI 多 run 访问非主 run）；找不到返回 nullptr
+const Run* findRunById(const ChainResult& cr, const std::string& id);
+
 } // namespace axr

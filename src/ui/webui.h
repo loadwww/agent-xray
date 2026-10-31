@@ -20,7 +20,8 @@ int countFailedTools(const Run& run);
 
 WebResponse webUiPage();
 WebResponse webUiRuns(const Config& cfg);
-WebResponse webUiRun(const Config& cfg, const std::string& id);
+// id = sessionId（目录名）；runId 可选，缺省取主 run（向后兼容旧页面）
+WebResponse webUiRun(const Config& cfg, const std::string& id, const std::string& runId);
 
 // 浏览器直接访问代理根路径时（Accept 含 text/html）返回页面，避免抢占 API 客户端的 GET /
 bool webUiWantsHtml(const std::string& path, const std::string& accept);
