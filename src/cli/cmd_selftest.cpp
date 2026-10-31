@@ -737,6 +737,19 @@ int cmdSelftest(const std::vector<std::string>& args) {
         }
         t.check(allTwoSteps, "T14 每个 run 各 2 步");
         t.check(allComplete, "T14 两个 run 均完整（无 incomplete）");
+
+        // P2-10 run id 末尾追加 4 位序号，同一秒同 system prompt 的 run 不再撞 id
+        bool idsOk = true;
+        for (const auto& r : cr.runs) {
+            if (r.id.size() != 29 || r.id[8] != '-' || r.id[15] != '-' || r.id[24] != '-') idsOk = false;
+        }
+        t.check(idsOk, "P2-10 run id 形如 YYYYMMDD-HHMMSS-xxxx-序号");
+        t.check(cr.runs[0].id != cr.runs[1].id, "P2-10 同一链内 run id 唯一");
+
+        auto again = buildChainFromEvents(dir + "/t14_two_tasks_same_system");
+        t.check(again.ok() && again.value.runs.size() == 2 && again.value.runs[0].id == cr.runs[0].id &&
+                    again.value.runs[1].id == cr.runs[1].id,
+                "P2-10 重复建链 run id 稳定");
     });
 
     // P0-2 多 run 输出：meta 登记全部 run、非主 run 落盘 run-<i>.json、CLI/UI 可按 id 访问

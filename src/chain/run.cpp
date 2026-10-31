@@ -1,6 +1,7 @@
 #include "chain/run.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <map>
 #include <set>
 
@@ -24,6 +25,14 @@ std::string compactStamp(const std::string& rfc3339) {
     }
     if (date.size() != 8 || time.size() != 6) return "unknown";
     return date + "-" + time;
+}
+
+// run 在本次建链结果中的序号，串到 run id 尾部防撞；用序号而非随机数，
+// 保证同一份事件反复建链（实时视图、replay）时 run id 稳定
+std::string runIndexSuffix(std::size_t index) {
+    char buf[8] = {0};
+    std::snprintf(buf, sizeof(buf), "%04x", static_cast<unsigned>(index));
+    return std::string(buf);
 }
 
 long long gapMinutes(const std::string& a, const std::string& b) {
@@ -74,6 +83,7 @@ ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts) {
 
     // 4. 逐根收集后代，按时间窗切成若干 run
     std::map<int, std::size_t> callToRun; // 请求下标 → run 下标（重试计数归并要用）
+    std::size_t runCount = 0;             // run 序号，用于 id 后缀防撞
     for (int root : roots) {
         std::vector<int> group;
         std::vector<int> stack{root};
@@ -105,7 +115,8 @@ ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts) {
         for (const auto& s : segments) {
             Run run;
             run.rootHash = prefixHashes(pairs[s.front()].call.messages).back();
-            run.id = compactStamp(pairs[s.front()].call.startedAt) + "-" + run.rootHash.substr(0, 8);
+            run.id = compactStamp(pairs[s.front()].call.startedAt) + "-" + run.rootHash.substr(0, 8) + "-" +
+                     runIndexSuffix(runCount++);
             run.startedAt = pairs[s.front()].call.startedAt;
             run.requestCount = static_cast<int>(s.size());
 
