@@ -128,6 +128,19 @@ try {
     $ollamaRun = Get-Content (Join-Path $runOllama.FullName "run.json") -Raw | ConvertFrom-Json
     Check ($ollamaRun.steps.Count -ge 3) "ollama 前缀 run 还原步数 >= 3（实际 $($ollamaRun.steps.Count)）"
 
+    Write-Host "[3.9] WP4 流式 sse_chunk 落盘脱敏（客户端仍收原文）"
+    Invoke-WebRequest -Uri "http://127.0.0.1:9099/__case/secret" -TimeoutSec 5 -UseBasicParsing | Out-Null
+    $ErrorActionPreference = "Continue"
+    $secretOut = & $axr run --config $cfg --root $runsRoot -- $python $agent --stream 2>&1 | Out-String
+    $ErrorActionPreference = "Stop"
+    Check ($LASTEXITCODE -eq 0) "secret 流式 axr run 退出码 0"
+    Check ($secretOut -match "sse has secret = True") "客户端收到的 SSE 仍是原文（含密钥）"
+    $runSecret = NewestRun
+    $eventsSecret = Join-Path $runSecret.FullName "events.jsonl"
+    $secretHits = (Select-String -Path $eventsSecret -Pattern "sk-SECRETKEY0123456789ABCDEFGHIJ" -AllMatches).Count
+    Check (($null -eq $secretHits) -or ($secretHits -eq 0)) "full 模式 sse_chunk 已脱敏"
+    Invoke-WebRequest -Uri "http://127.0.0.1:9099/__case/deep" -TimeoutSec 5 -UseBasicParsing | Out-Null
+
     Write-Host "[4] axr serve：前台代理 + 路由转发 + 未匹配 404"
     $serveRoot = Join-Path $build "e2e-serve"
     if (Test-Path $serveRoot) { Remove-Item -Recurse -Force $serveRoot }
@@ -193,6 +206,27 @@ try {
     }
     if (!$serve.HasExited) { Stop-Process -Id $serve.Id -Force }
     Check (Test-Path (Join-Path $serveRoot "runs")) "serve 也创建了会话目录"
+
+    Write-Host "[4.1] WP6 serve 无流量不创建会话目录（懒建）"
+    $quietRoot = Join-Path $build "e2e-serve-quiet"
+    if (Test-Path $quietRoot) { Remove-Item -Recurse -Force $quietRoot }
+    $quiet = Start-Process -FilePath $axr -PassThru -WindowStyle Hidden `
+        -ArgumentList "serve", "--config", $cfg, "--root", $quietRoot, "--listen", "8085" `
+        -RedirectStandardOutput (Join-Path $build "e2e-serve-quiet.log")
+    $quietUp = $false
+    for ($i = 0; $i -lt 60; $i++) {
+        try {
+            $c = New-Object System.Net.Sockets.TcpClient
+            $c.Connect("127.0.0.1", 8085)
+            $c.Close()
+            $quietUp = $true
+            break
+        } catch { Start-Sleep -Milliseconds 100 }
+    }
+    Check $quietUp "serve 开始监听 8085（无流量）"
+    if (!$quiet.HasExited) { Stop-Process -Id $quiet.Id -Force }
+    Start-Sleep -Milliseconds 300
+    Check (-not (Test-Path (Join-Path $quietRoot "runs"))) "无流量 serve 未创建 run 目录"
 
     Start-Sleep -Milliseconds 400
     $serveRun = Get-ChildItem (Join-Path $serveRoot "runs") -Directory | Sort-Object LastWriteTime -Descending |

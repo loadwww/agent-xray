@@ -91,7 +91,9 @@ std::shared_ptr<ChainResult> liveChain(const std::string& runDir, const ChainOpt
         return entry->chain;                            // 读失败时退回上次结果
     }
     if (poll.value || !entry->chain) {
-        auto built = buildChainFromRawEvents(entry->tail.events, opts);
+        // 传 session 目录名做 run id 命名空间，与 CLI replay 得到同一套 id
+        const std::string ns = std::filesystem::path(runDir).filename().string();
+        auto built = buildChainFromRawEvents(entry->tail.events, opts, ns);
         if (built.ok()) entry->chain = std::make_shared<ChainResult>(std::move(built.value));
     }
     return entry->chain;

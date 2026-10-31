@@ -23,6 +23,9 @@ count_kind() {    # $1=events.jsonl $2=kind
 newest_run() {
     ls -1dt "$RUNS_ROOT"/runs/*/ 2>/dev/null | head -n 1
 }
+newest_run_under() {  # $1=root
+    ls -1dt "$1"/runs/*/ 2>/dev/null | head -n 1
+}
 
 [ -x "$AXR" ] || { echo "缺少 $AXR，请先构建（cmake --build build -j）"; exit 2; }
 [ -x "$MOCK" ] || { echo "缺少 $MOCK，请先构建"; exit 2; }
@@ -122,6 +125,63 @@ RUN4=$(newest_run)
 RUN4=${RUN4%/}
 OLLAMA_STEPS=$("$PYTHON" -c "import json,sys;print(len(json.load(open(sys.argv[1]))['steps']))" "$RUN4/run.json" 2>/dev/null)
 [ "${OLLAMA_STEPS:-0}" -ge 3 ]; check "$?" "ollama 前缀 run 还原步数 >= 3（实际 ${OLLAMA_STEPS:-0}）"
+
+echo "[5] WP4 流式 sse_chunk 落盘脱敏（客户端仍收原文）"
+curl -s -m 5 "http://127.0.0.1:9099/__case/secret" >/dev/null
+SECRET_OUT=$("$AXR" run --config "$CFG" --root "$RUNS_ROOT" -- "$PYTHON" "$AGENT" --stream 2>&1)
+check "$?" "secret 流式 axr run 退出码 0"
+echo "$SECRET_OUT" | grep -q "sse has secret = True"
+check "$?" "客户端收到的 SSE 仍是原文（含密钥）"
+RUN5=$(newest_run)
+RUN5=${RUN5%/}
+[ "$(grep -c "sk-SECRETKEY0123456789ABCDEFGHIJ" "$RUN5/events.jsonl" || true)" -eq 0 ]
+check "$?" "full 模式 sse_chunk 已脱敏"
+
+echo "[6] WP5/WP6 serve 优雅退出与懒建会话"
+wait_port() {  # $1=端口
+    for _ in $(seq 1 60); do
+        if (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; then return 0; fi
+        sleep 0.1
+    done
+    return 1
+}
+
+SERVE_ROOT="$BUILD/e2e-serve-shutdown"
+rm -rf "$SERVE_ROOT"
+
+# 6.1 无流量时 SIGINT：懒建会话，不应留下任何 run 目录
+"$AXR" serve --config "$CFG" --root "$SERVE_ROOT" --listen 8083 > "$BUILD/e2e-serve-quiet.log" 2>&1 &
+SERVE_PID=$!
+wait_port 8083
+check "$?" "serve 开始监听 8083（无流量）"
+kill -INT "$SERVE_PID"
+wait "$SERVE_PID"
+check "$?" "无流量 SIGINT 退出码 0"
+DIRS=0
+if [ -d "$SERVE_ROOT/runs" ]; then DIRS=$(ls -1 "$SERVE_ROOT/runs" | wc -l | tr -d ' '); fi
+[ "$DIRS" -eq 0 ]; check "$?" "无流量退出后未新增 run 目录（实际 $DIRS）"
+
+# 6.2 有流量时 SIGINT：必须完成 finalize，meta.json 落盘
+"$AXR" serve --config "$CFG" --root "$SERVE_ROOT" --listen 8084 > "$BUILD/e2e-serve-live.log" 2>&1 &
+SERVE2_PID=$!
+wait_port 8084
+check "$?" "serve 开始监听 8084"
+curl -s -m 10 -X POST "http://127.0.0.1:8084/v1/chat/completions" \
+    -H 'Content-Type: application/json' \
+    -d '{"model":"deepseek-chat","messages":[{"role":"user","content":"hi"}]}' >/dev/null
+sleep 1
+kill -INT "$SERVE2_PID"
+wait "$SERVE2_PID"
+check "$?" "有流量 SIGINT 退出码 0"
+LIVE_RUN=$(newest_run_under "$SERVE_ROOT")
+LIVE_RUN=${LIVE_RUN%/}
+[ -n "$LIVE_RUN" ]; check "$?" "有流量退出后生成 run 目录"
+if [ -n "$LIVE_RUN" ]; then
+    [ -f "$LIVE_RUN/meta.json" ] && [ -f "$LIVE_RUN/run.json" ]
+    check "$?" "SIGINT 收尾后 meta.json / run.json 已生成"
+fi
+ALL_DIRS=$(ls -1 "$SERVE_ROOT/runs" 2>/dev/null | wc -l | tr -d ' ')
+[ "$ALL_DIRS" -eq 1 ]; check "$?" "两轮 serve 只留下有流量的 1 个会话（实际 $ALL_DIRS）"
 
 if [ "$FAIL" -gt 0 ]; then
     echo

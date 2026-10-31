@@ -352,13 +352,18 @@ void ReverseProxySource::handleStream(const ForwardRequest& fr, const ForwardReq
     const ForwardRequest fallback = hasFallback ? *fallbackFr : ForwardRequest{};
     std::atomic<bool>* usageDisabled = &usageInjectionDisabled_;
     const bool captureSummary = cfg_.proxy.capture == "summary";
-    bridge->start(std::thread([bridge, fr, fallback, hasFallback, hop, emitFn, usageDisabled, captureSummary] {
+    const std::vector<std::string> redactPatterns = cfg_.redact.patterns;
+    bridge->start(std::thread([bridge, fr, fallback, hasFallback, hop, emitFn, usageDisabled, captureSummary,
+                               redactPatterns] {
         auto emitChunk = [&](const std::string& chunk) {
             Event ce;
             ce.kind = "sse_chunk";
             ce.hop = hop;
-            // P2-13 summary 模式同样不落流式正文
-            ce.data = (captureSummary && !chunk.empty()) ? summarizeBody(chunk) : chunk;
+            // P2-13 summary 模式只留摘要；WP4 full 模式落盘前同样脱敏，
+            // 但转发给客户端的始终是原始 chunk（绝不能改动客户端收到的字节）
+            if (captureSummary && !chunk.empty()) ce.data = summarizeBody(chunk);
+            else if (!chunk.empty()) ce.data = redactBody(chunk, redactPatterns);
+            else ce.data = chunk;
             if (emitFn) emitFn(ce);
             bridge->push(chunk);
         };

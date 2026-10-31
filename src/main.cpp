@@ -4,6 +4,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <curl/curl.h>
 #endif
 
 #include "cli/cli.h"
@@ -12,17 +14,21 @@
 namespace axr {
 namespace {
 
-const char* kVersion = "0.4.0";
+const char* kVersion = "0.4.1";
 
 void printUsage() {
     std::cout << "AgentXray " << kVersion << "\n\n"
               << "用法:\n"
               << "  axr serve [--config config.yaml] [--root dir] [--listen port] [--bind host]\n"
-              << "  axr run [--config config.yaml] [--root dir] [--listen port] -- <command...>\n"
-              << "  axr list [--root dir] [--config config.yaml] [--json]\n"
-              << "  axr show <run目录|events.jsonl|runID> [--bench] [--config config.yaml]\n"
-              << "  axr report <run目录|events.jsonl|runID> [--out file] [--config config.yaml]\n"
-              << "  axr export <run目录|events.jsonl|runID> --format mermaid|json [--out file]\n"
+              << "            [--allow-remote]\n"
+              << "  axr run [--config config.yaml] [--root dir] [--listen port] [--allow-remote]\n"
+              << "          -- <command...>\n"
+              << "  axr list [--root dir] [--config config.yaml] [--json] [--all]\n"
+              << "  axr show <run目录|events.jsonl|sessionID|runID> [--run runId] [--bench]\n"
+              << "           [--config config.yaml] [--root dir]\n"
+              << "  axr report <run目录|events.jsonl|sessionID|runID> [--run runId] [--out file]\n"
+              << "  axr export <run目录|events.jsonl|sessionID|runID> --format mermaid|json\n"
+              << "             [--run runId] [--out file]\n"
               << "  axr diff <base> <cur> [--config config.yaml] [--root dir]\n"
               << "  axr prune --days N [--apply] | --auto [--root dir] [--config config.yaml]\n"
               << "  axr replay <run目录|events.jsonl> [--format mermaid|json|text] [--out file]\n"
@@ -76,6 +82,15 @@ int runCli(int argc, char** argv) {
 int main(int argc, char** argv) {
 #ifdef _WIN32
     SetConsoleOutputCP(CP_UTF8);
-#endif
     return axr::runCli(argc, argv);
+#else
+    // WP7：libcurl 全局初始化必须在起线程前完成（httplib 多线程下首次隐式初始化不是线程安全的）
+    if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+        std::cerr << "错误: curl_global_init 失败\n";
+        return 1;
+    }
+    const int rc = axr::runCli(argc, argv);
+    curl_global_cleanup();
+    return rc;
+#endif
 }

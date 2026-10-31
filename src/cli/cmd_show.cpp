@@ -77,11 +77,21 @@ void printRun(const Run& run) {
 } // namespace
 
 int cmdShow(const std::vector<std::string>& args) {
+    for (const auto& a : args) {
+        if (a == "--help" || a == "-h") {
+            std::cout << "用法: axr show <run目录|events.jsonl|sessionID|runID> [--run runId]\n"
+                         "                [--config config.yaml] [--root dir] [--bench]\n"
+                         "  --run runId   只看指定 run（多 run session 里的非主 run）\n"
+                         "  --root dir    采集根目录（默认取配置 storage.root）\n"
+                         "  --bench       打印建链耗时\n";
+            return 0;
+        }
+    }
     ShowOpts opts;
     Status st = parseShowArgs(args, opts);
     if (!st.ok()) {
         std::cerr << st.err
-                  << "\n用法: axr show <run目录|events.jsonl|runID> [--run runId] [--config config.yaml] [--root dir]\n";
+                  << "\n用法: axr show <run目录|events.jsonl|sessionID|runID> [--run runId] [--config config.yaml] [--root dir]\n";
         return 2;
     }
 
@@ -90,7 +100,14 @@ int cmdShow(const std::vector<std::string>& args) {
         std::cerr << cfg.err << "\n";
         return 1;
     }
-    const std::string target = resolveRunInput(opts.target, cfg.value);
+    auto tgt = resolveRunTarget(opts.target, cfg.value);
+    if (!tgt.ok()) {
+        std::cerr << tgt.err << "\n";
+        return 1;
+    }
+    const std::string target = tgt.value.path;
+    // 参数本身就是 runId 时等价于 --run
+    const std::string selectId = opts.runId.empty() ? tgt.value.runId : opts.runId;
     const auto t0 = std::chrono::steady_clock::now();
     auto chain = buildChainFromEvents(target, cfg.value.chainOptions());
     if (!chain.ok()) {
@@ -105,10 +122,10 @@ int cmdShow(const std::vector<std::string>& args) {
         std::cout << "未从 " << target << " 中还原出任何 run\n";
         return 1;
     }
-    if (!opts.runId.empty()) {
-        const Run* r = findRunById(chain.value, opts.runId);
+    if (!selectId.empty()) {
+        const Run* r = findRunById(chain.value, selectId);
         if (r == nullptr) {
-            std::cerr << "找不到 run: " << opts.runId << "（该 session 的 run:";
+            std::cerr << "找不到 run: " << selectId << "（该 session 的 run:";
             for (const auto& x : chain.value.runs) std::cerr << " " << x.id;
             std::cerr << "）\n";
             return 1;

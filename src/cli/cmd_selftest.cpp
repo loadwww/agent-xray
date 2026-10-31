@@ -486,6 +486,54 @@ void testTruncatedSkipParse(TestCtx& t) {
     t.check(pairs2.ok() && pairs2.value[0].resp.latencyMs == 100, "P2-14 截断响应仍保留延迟");
 }
 
+// WP3：请求正文不可解析（capture=summary / 截断）时 run 必须标记 incomplete，
+// 但 Step 仍保留，能看出调用发生过与时间信息
+void testParseFailureStatus(TestCtx& t) {
+    RawEvent req;
+    req.kind = "req";
+    req.hop = "h-1";
+    req.upstream = "https://api.deepseek.com/v1/chat/completions";
+    req.reqBody = "[capture:summary size=1234 sha256=abcd1234abcd1234]";
+    req.ts = "2026-10-30T10:00:00.000+08:00";
+
+    RawEvent resp;
+    resp.kind = "resp";
+    resp.hop = "h-1";
+    resp.status = 200;
+    resp.latencyMs = 120;
+    resp.ts = "2026-10-30T10:00:01.000+08:00";
+    resp.respBody =
+        R"({"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],)"
+        R"("usage":{"prompt_tokens":10,"completion_tokens":2}})";
+
+    auto cr = buildChainFromRawEvents({req, resp});
+    t.check(cr.ok() && cr.value.runs.size() == 1, "WP3 summary 请求仍切出 1 个 run");
+    if (!cr.ok() || cr.value.runs.empty()) return;
+    const Run& r = cr.value.runs[0];
+    t.check(r.steps.size() == 1, "WP3 summary 模式的 Step 仍保留");
+    t.check(r.steps[0].call.messages.empty(), "WP3 summary 模式 Step 无消息链");
+    t.check(r.incomplete, "WP3 summary 模式 run 标记 incomplete");
+    bool hasNote = false;
+    for (const auto& m : r.missing)
+        if (m.find("请求正文不可解析") != std::string::npos) hasNote = true;
+    t.check(hasNote, "WP3 missing 含正文不可解析文案");
+
+    // 截断请求同样不可用 → incomplete
+    RawEvent truncReq = req;
+    truncReq.truncated = true;
+    truncReq.reqBody = R"({"model":"m","messages":[{"role":"user","content":"hi"}]})";
+    auto cr2 = buildChainFromRawEvents({truncReq, resp});
+    t.check(cr2.ok() && !cr2.value.runs.empty() && cr2.value.runs[0].incomplete,
+            "WP3 截断请求的 run 标记 incomplete");
+
+    // 正常 full 模式不受影响
+    RawEvent fullReq = req;
+    fullReq.reqBody = R"({"model":"m","messages":[{"role":"user","content":"hi"}]})";
+    auto cr3 = buildChainFromRawEvents({fullReq, resp});
+    t.check(cr3.ok() && !cr3.value.runs.empty() && !cr3.value.runs[0].incomplete,
+            "WP3 正常 full 模式 run 仍为 complete");
+}
+
 // P2-15 增量读取 + 空闲收尾配置：只续读新字节、尾行不完整先不解析、重建后 run id 稳定
 void testLiveIncremental(TestCtx& t) {
     auto on = parseConfigText("storage:\n  idle_finalize_minutes: 10\n");
@@ -869,6 +917,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     testWebUi(t, dir);
     testCapturePrivacy(t);
     testTruncatedSkipParse(t);
+    testParseFailureStatus(t);
     testLiveIncremental(t);
     testAutoPrune(t);
 
@@ -960,11 +1009,13 @@ int cmdSelftest(const std::vector<std::string>& args) {
         t.check(allComplete, "T14 两个 run 均完整（无 incomplete）");
 
         // P2-10 run id 末尾追加 4 位序号，同一秒同 system prompt 的 run 不再撞 id
+        // WP1 再追加 4 位 session 命名空间段：YYYYMMDD-HHMMSS-xxxxxxxx-nnnn-序号
         bool idsOk = true;
         for (const auto& r : cr.runs) {
-            if (r.id.size() != 29 || r.id[8] != '-' || r.id[15] != '-' || r.id[24] != '-') idsOk = false;
+            if (r.id.size() != 34 || r.id[8] != '-' || r.id[15] != '-' || r.id[24] != '-' || r.id[29] != '-')
+                idsOk = false;
         }
-        t.check(idsOk, "P2-10 run id 形如 YYYYMMDD-HHMMSS-xxxx-序号");
+        t.check(idsOk, "P2-10 run id 形如 YYYYMMDD-HHMMSS-xxxx-nnnn-序号");
         t.check(cr.runs[0].id != cr.runs[1].id, "P2-10 同一链内 run id 唯一");
 
         auto again = buildChainFromEvents(dir + "/t14_two_tasks_same_system");
@@ -1012,6 +1063,17 @@ int cmdSelftest(const std::vector<std::string>& args) {
             if (b.value("id", "").empty() || b.value("steps", 0) != 2) briefOk = false;
         }
         t.check(briefOk, "P0-2 meta.runs 摘要字段齐全（id/steps）");
+
+        // WP2：目标可以是 sessionID，也可以直接是非主 run 的 runId
+        auto tgtOther = resolveRunTarget(otherId, cfg);
+        t.check(tgtOther.ok() && !tgtOther.value.runId.empty() &&
+                    fs::equivalent(tgtOther.value.path, sessionDir),
+                "WP2 runId 可定位到所属 session");
+        auto tgtSession = resolveRunTarget("20261030-150000-p02x", cfg);
+        t.check(tgtSession.ok() && tgtSession.value.runId.empty() &&
+                    fs::equivalent(tgtSession.value.path, sessionDir),
+                "WP2 sessionId 行为不变");
+        t.check(isRunIdLike(otherId) && !isRunIdLike("20261030-150000-p02x"), "WP2 runId 形态识别正确");
 
         // 非主 run 落盘 run-0.json，内容是完整 Run JSON
         const fs::path secondary = sessionDir / "run-0.json";
@@ -1259,9 +1321,35 @@ int cmdSelftest(const std::vector<std::string>& args) {
             }
             t.check(args3, "M4 diff fixture T3 参数变化");
             t.check(result3, "M4 diff fixture T3 结果变化");
+
+            // WP1：run id 含 session 命名空间，两个目录即使时间戳/根哈希相同也不再撞 id
+            const std::string bId = primaryRun(baseChain.value)->id;
+            const std::string cId = primaryRun(curChain.value)->id;
+            t.check(bId.substr(0, 24) == cId.substr(0, 24) && bId != cId,
+                    "WP1 同时间戳同根哈希的两个 session run id 不同");
+            auto baseAgain = buildChainFromEvents(dir + "/t13_diff_base");
+            t.check(baseAgain.ok() && primaryRun(baseAgain.value) &&
+                        primaryRun(baseAgain.value)->id == bId,
+                    "WP1 同一 fixture 重复 replay run id 稳定");
         } else {
             t.check(false, "M4 diff fixture 加载失败");
         }
+    }
+
+    // WP7：主 run 并列（步数相同）时应取开始最早的一条
+    {
+        ChainResult cr;
+        Run early;
+        early.id = "early";
+        early.startedAt = "2026-10-30T10:00:00.000+08:00";
+        early.steps.resize(2);
+        Run late = early;
+        late.id = "late";
+        late.startedAt = "2026-10-30T10:00:05.000+08:00";
+        cr.runs.push_back(early);
+        cr.runs.push_back(late);
+        const Run* p = primaryRun(cr);
+        t.check(p != nullptr && p->id == "early", "WP7 主 run 步数并列时取最早");
     }
 
     std::cout << "\n结果: " << t.pass << " passed, " << t.fail << " failed\n";

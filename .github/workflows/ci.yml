@@ -19,6 +19,18 @@ jobs:
         run: |
           .\build\axr.exe selftest
           if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: e2e（mock 上游 + axr run/serve 全链路）
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File tests/e2e_proxy.ps1
+      - name: 上传 e2e 产物（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-windows
+          path: |
+            build/e2e-runs
+            build/e2e-serve*.log
+          if-no-files-found: ignore
 
   # Linux 自 P1-4 起为全功能构建（libcurl 转发层 + POSIX 子进程），可完整采集
   linux:
@@ -33,3 +45,14 @@ jobs:
         run: cmake --build build -j
       - name: selftest
         run: ./build/axr selftest
+      - name: e2e（含 WP5 SIGINT 优雅退出 / WP6 懒建会话）
+        run: bash tests/e2e_proxy.sh
+      - name: 上传 e2e 产物（失败时）
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-linux
+          path: |
+            build/e2e-runs
+            build/e2e-serve*.log
+          if-no-files-found: ignore

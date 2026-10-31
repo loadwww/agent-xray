@@ -19,7 +19,19 @@ struct Pending {
     bool stream = false;
     std::string lastTs;
     bool hasResp = false;
+    // 请求正文不可解析的原因（summary / 截断 / 坏 JSON）。响应解析会整体覆盖
+    // CallPair.resp，这里单独留着，出队时再回填，供 WP3 判定 run 不可用
+    std::string reqErr;
 };
+
+// 输入路径 → session 目录名（run id 命名空间）。目录取自身名，
+// events.jsonl 取父目录名，其它文件也退回父目录名
+std::string deriveSessionNamespace(const std::string& input) {
+    const std::filesystem::path p(input);
+    if (p.filename().string() == "events.jsonl") return p.parent_path().filename().string();
+    if (std::filesystem::is_directory(p)) return p.filename().string();
+    return p.parent_path().filename().string();
+}
 
 } // namespace
 
@@ -161,6 +173,7 @@ Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events,
             if (e.truncated) {
                 if (stats) ++stats->parseFailed;
                 p.pair.resp.err = "req_body 被截断，无法解析";
+                p.reqErr = p.pair.resp.err;
                 pendings[e.hop] = std::move(p);
                 order.push_back(e.hop);
                 continue;
@@ -172,6 +185,7 @@ Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events,
             } catch (...) {
                 if (stats) ++stats->parseFailed;
                 p.pair.resp.err = "req_body 解析失败";
+                p.reqErr = p.pair.resp.err;
                 pendings[e.hop] = std::move(p);
                 order.push_back(e.hop);
                 continue;
@@ -180,6 +194,7 @@ Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events,
             if (!parsed.ok()) {
                 if (stats) ++stats->parseFailed;
                 p.pair.resp.err = parsed.err;
+                p.reqErr = parsed.err;
             } else {
                 p.pair.call.messages = parsed.value.messages;
                 p.pair.call.tools = parsed.value.tools;
@@ -250,28 +265,33 @@ Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events,
         if (it == pendings.end()) continue;
         Pending& p = it->second;
         p.pair.call.endedAt = p.lastTs;
+        // 请求正文不可解析时保留原因（响应解析会把 resp.err 覆盖掉）
+        if (!p.reqErr.empty() && p.pair.resp.err.empty()) p.pair.resp.err = p.reqErr;
         // 响应未到也算一条（err 已记录），保持链完整可诊断
         out.push_back(std::move(p.pair));
     }
     return Result<std::vector<CallPair>>::Ok(std::move(out));
 }
 
-Result<ChainResult> buildChainFromRawEvents(const std::vector<RawEvent>& events, const ChainOptions& opts) {
+Result<ChainResult> buildChainFromRawEvents(const std::vector<RawEvent>& events, const ChainOptions& opts,
+                                            const std::string& runIdNamespace) {
     AssembleStats stats;
     auto pairs = assembleCalls(events, &stats);
     if (!pairs.ok()) return Result<ChainResult>::Fail(pairs.err);
-    ChainResult cr = buildRuns(std::move(pairs.value), opts);
+    ChainResult cr = buildRuns(std::move(pairs.value), opts, runIdNamespace);
     cr.unsupportedRequests = stats.unsupportedRequests;
     cr.parseFailed = stats.parseFailed;
     cr.truncatedEvents = stats.truncatedEvents;
     return Result<ChainResult>::Ok(std::move(cr));
 }
 
-Result<ChainResult> buildChainFromEvents(const std::string& input, const ChainOptions& opts) {
+Result<ChainResult> buildChainFromEvents(const std::string& input, const ChainOptions& opts,
+                                         const std::string& runIdNamespace) {
     const std::string path = resolveEventsPath(input);
     auto events = readEventsFile(path);
     if (!events.ok()) return Result<ChainResult>::Fail(events.err);
-    return buildChainFromRawEvents(events.value, opts);
+    const std::string ns = runIdNamespace.empty() ? deriveSessionNamespace(input) : runIdNamespace;
+    return buildChainFromRawEvents(events.value, opts, ns);
 }
 
 } // namespace axr

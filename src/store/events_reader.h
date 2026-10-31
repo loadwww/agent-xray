@@ -59,10 +59,13 @@ Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events,
                                             AssembleStats* stats = nullptr);
 
 // 一步到位：events 路径（目录或文件）→ 切 run / 建链
-Result<ChainResult> buildChainFromEvents(const std::string& input, const ChainOptions& opts = ChainOptions{});
+// runIdNamespace 留空时自动取输入路径所在 session 目录名，保证不同 session 的 run id 不撞
+Result<ChainResult> buildChainFromEvents(const std::string& input, const ChainOptions& opts = ChainOptions{},
+                                         const std::string& runIdNamespace = "");
 
 // P2-15：已解析的事件 → 切 run / 建链（供增量缓存复用，避免重复读盘）
 Result<ChainResult> buildChainFromRawEvents(const std::vector<RawEvent>& events,
-                                            const ChainOptions& opts = ChainOptions{});
+                                            const ChainOptions& opts = ChainOptions{},
+                                            const std::string& runIdNamespace = "");
 
 } // namespace axr

@@ -18,14 +18,16 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <csignal>
 #endif
 
 namespace axr {
 namespace {
 
+#ifdef _WIN32
 std::atomic<bool> g_stop{false};
 
-#ifdef _WIN32
 BOOL WINAPI onCtrlSignal(DWORD type) {
     if (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT || type == CTRL_CLOSE_EVENT) {
         g_stop = true;
@@ -33,6 +35,12 @@ BOOL WINAPI onCtrlSignal(DWORD type) {
     }
     return FALSE;
 }
+#else
+// WP5：POSIX 下 Ctrl+C / SIGTERM 只置标志，收尾在主循环退出后做。
+// handler 内不能做 IO、不能构造对象、不能加锁，否则可能死锁。
+volatile sig_atomic_t g_stopSig = 0;
+
+void onPosixSignal(int) { g_stopSig = 1; }
 #endif
 
 void printSummary(const RunSummary& s) {
@@ -52,10 +60,9 @@ class ServeSessions {
 public:
     ServeSessions(const Config& cfg, ReverseProxySource& source) : cfg_(cfg), source_(source) {}
 
-    bool start() {
-        std::lock_guard<std::mutex> lk(mu_);
-        return beginLocked();
-    }
+    // WP6：懒建会话。start() 只记录配置，不在启动时创建目录；
+    // 首个事件到来时才 beginLocked()，避免 serve 空跑留下 0 步的“无 meta”噪音目录。
+    bool start() { return true; }
 
     const std::string& runDir() const { return runDir_; }
     const std::string& sessionId() const { return sessionId_; }
@@ -63,8 +70,11 @@ public:
     void push(const Event& e) {
         std::lock_guard<std::mutex> lk(mu_);
         if (!rec_) {
-            logWarn("serve", "当前没有可写入的会话，事件已丢弃");
-            return;
+            if (!beginLocked()) {
+                logWarn("serve", "无法创建会话目录，事件已丢弃");
+                return;
+            }
+            std::cout << "  新会话: " << runDir_ << "（开始采集）\n";
         }
         rec_->push(e);
         ++events_;
@@ -95,7 +105,11 @@ public:
 
     void finish() {
         std::lock_guard<std::mutex> lk(mu_);
-        if (!rec_) return;
+        if (!rec_) {
+            // WP6：懒建会话后，无流量退出时根本没有目录，不写 meta
+            std::cout << "✓ 采集结束（未捕获到任何请求，未生成会话目录）\n";
+            return;
+        }
         const std::string sid = sessionId_;
         const RunSummary s = finalizeLocked();
         std::cout << "✓ 采集完成\n  run: " << sid << "\n";
@@ -170,7 +184,9 @@ int cmdServe(const std::vector<std::string>& args) {
     }
 
     // P2-16：启动时按 retention_days 清一次旧 run（<=0 关闭自动清理）
-    if (cfg.value.storage.retentionDays > 0) {
+    // WP6：懒建会话后首次启动可能还没有 runs 目录，这不算失败，直接跳过
+    const std::filesystem::path runsDir = std::filesystem::path(cfg.value.storage.root) / "runs";
+    if (cfg.value.storage.retentionDays > 0 && std::filesystem::exists(runsDir)) {
         auto pruned = pruneRuns(cfg.value.storage.root, cfg.value.storage.retentionDays, true);
         if (!pruned.ok()) {
             logWarn("serve", "启动清理失败: " + pruned.err);
@@ -182,6 +198,16 @@ int cmdServe(const std::vector<std::string>& args) {
 
     ReverseProxySource source(cfg.value);
     ServeSessions sessions(cfg.value, source);
+
+    // WP5：尽早注册退出信号。端口在 source.start() 内就开始监听，
+    // 若 handler 晚于监听注册，这段窗口内的 Ctrl+C 会走默认动作直接杀进程、丢掉收尾。
+#ifdef _WIN32
+    SetConsoleCtrlHandler(onCtrlSignal, TRUE);
+#else
+    std::signal(SIGINT, onPosixSignal);
+    std::signal(SIGTERM, onPosixSignal);
+#endif
+
     if (!sessions.start()) return 1;
     if (!source.start([&sessions](const Event& e) { sessions.push(e); })) return 1;
 
@@ -190,20 +216,24 @@ int cmdServe(const std::vector<std::string>& args) {
               << "  监听: " << base << "\n"
               << "  用法: OPENAI_BASE_URL=" << base << "/v1\n"
               << "  页面: " << base << "/__xray （浏览器打开可看实时流程图）\n"
-              << "  会话: " << sessions.runDir() << "\n";
+              << "  会话: 首个请求到达时自动创建（无流量不落盘）\n";
     if (cfg.value.storage.idleFinalizeMinutes > 0)
         std::cout << "  空闲 " << cfg.value.storage.idleFinalizeMinutes
                   << " 分钟自动收尾并开新会话（storage.idle_finalize_minutes，<=0 关闭）\n";
     std::cout << "  按 Ctrl+C 结束并生成分析产物\n";
 
 #ifdef _WIN32
-    SetConsoleCtrlHandler(onCtrlSignal, TRUE);
-#endif
-
     while (!g_stop.load() && source.running()) {
         sessions.rotateIfIdle(cfg.value.storage.idleFinalizeMinutes);
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
+#else
+    // SIGINT（Ctrl+C）与 SIGTERM（systemd / kill）都走同一条收尾路径
+    while (g_stopSig == 0 && source.running()) {
+        sessions.rotateIfIdle(cfg.value.storage.idleFinalizeMinutes);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+#endif
 
     std::cout << "\n正在收尾...\n";
     source.stop();
