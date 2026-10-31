@@ -26,7 +26,10 @@ struct ChainResult {
     int truncatedEvents = 0;     // body 超过 max_body_bytes 被截断的事件
 };
 
-ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts = ChainOptions{});
+// runIdNamespace：当前 session 目录名，参与 run id 生成，保证不同 session
+// 即使首请求同秒、根哈希相同也不会撞 id。留空时用 "0000" 占位。
+ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts = ChainOptions{},
+                      const std::string& runIdNamespace = "");
 
 // 主 run：步数最多的那条（并列取最早）；用于 report / export / diff
 const Run* primaryRun(const ChainResult& cr);

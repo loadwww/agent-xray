@@ -1,6 +1,7 @@
 #include "chain/run.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cstdio>
 #include <map>
 #include <set>
@@ -35,6 +36,20 @@ std::string runIndexSuffix(std::size_t index) {
     return std::string(buf);
 }
 
+// session 命名空间 → 4 位 hex。不同 session 即使首请求同秒、根哈希相同，
+// 也会因目录名不同而得到不同的 run id；用固定哈希保证 replay 稳定
+std::string namespaceSuffix(const std::string& ns) {
+    if (ns.empty()) return "0000";
+    std::uint32_t h = 2166136261u; // FNV-1a 32bit
+    for (unsigned char c : ns) {
+        h ^= static_cast<std::uint32_t>(c);
+        h *= 16777619u;
+    }
+    char buf[16] = {0};
+    std::snprintf(buf, sizeof(buf), "%08x", h);
+    return std::string(buf, 4);
+}
+
 long long gapMinutes(const std::string& a, const std::string& b) {
     auto ta = parseRfc3339(a);
     auto tb = parseRfc3339(b);
@@ -44,9 +59,10 @@ long long gapMinutes(const std::string& a, const std::string& b) {
 
 } // namespace
 
-ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts) {
+ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts, const std::string& runIdNamespace) {
     ChainResult result;
     if (pairs.empty()) return result;
+    const std::string nsSuffix = namespaceSuffix(runIdNamespace);
 
     // 1. 按时间排序（RFC3339 字符串同偏移可直接比大小，这里用解析保证稳健）
     std::stable_sort(pairs.begin(), pairs.end(), [](const CallPair& a, const CallPair& b) {
@@ -116,7 +132,7 @@ ChainResult buildRuns(std::vector<CallPair> pairs, const ChainOptions& opts) {
             Run run;
             run.rootHash = prefixHashes(pairs[s.front()].call.messages).back();
             run.id = compactStamp(pairs[s.front()].call.startedAt) + "-" + run.rootHash.substr(0, 8) + "-" +
-                     runIndexSuffix(runCount++);
+                     nsSuffix + "-" + runIndexSuffix(runCount++);
             run.startedAt = pairs[s.front()].call.startedAt;
             run.requestCount = static_cast<int>(s.size());
 

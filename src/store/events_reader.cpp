@@ -21,6 +21,15 @@ struct Pending {
     bool hasResp = false;
 };
 
+// 输入路径 → session 目录名（run id 命名空间）。目录取自身名，
+// events.jsonl 取父目录名，其它文件也退回父目录名
+std::string deriveSessionNamespace(const std::string& input) {
+    const std::filesystem::path p(input);
+    if (p.filename().string() == "events.jsonl") return p.parent_path().filename().string();
+    if (std::filesystem::is_directory(p)) return p.filename().string();
+    return p.parent_path().filename().string();
+}
+
 } // namespace
 
 std::string resolveEventsPath(const std::string& input) {
@@ -256,22 +265,25 @@ Result<std::vector<CallPair>> assembleCalls(const std::vector<RawEvent>& events,
     return Result<std::vector<CallPair>>::Ok(std::move(out));
 }
 
-Result<ChainResult> buildChainFromRawEvents(const std::vector<RawEvent>& events, const ChainOptions& opts) {
+Result<ChainResult> buildChainFromRawEvents(const std::vector<RawEvent>& events, const ChainOptions& opts,
+                                            const std::string& runIdNamespace) {
     AssembleStats stats;
     auto pairs = assembleCalls(events, &stats);
     if (!pairs.ok()) return Result<ChainResult>::Fail(pairs.err);
-    ChainResult cr = buildRuns(std::move(pairs.value), opts);
+    ChainResult cr = buildRuns(std::move(pairs.value), opts, runIdNamespace);
     cr.unsupportedRequests = stats.unsupportedRequests;
     cr.parseFailed = stats.parseFailed;
     cr.truncatedEvents = stats.truncatedEvents;
     return Result<ChainResult>::Ok(std::move(cr));
 }
 
-Result<ChainResult> buildChainFromEvents(const std::string& input, const ChainOptions& opts) {
+Result<ChainResult> buildChainFromEvents(const std::string& input, const ChainOptions& opts,
+                                         const std::string& runIdNamespace) {
     const std::string path = resolveEventsPath(input);
     auto events = readEventsFile(path);
     if (!events.ok()) return Result<ChainResult>::Fail(events.err);
-    return buildChainFromRawEvents(events.value, opts);
+    const std::string ns = runIdNamespace.empty() ? deriveSessionNamespace(input) : runIdNamespace;
+    return buildChainFromRawEvents(events.value, opts, ns);
 }
 
 } // namespace axr

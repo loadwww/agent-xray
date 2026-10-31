@@ -960,11 +960,13 @@ int cmdSelftest(const std::vector<std::string>& args) {
         t.check(allComplete, "T14 两个 run 均完整（无 incomplete）");
 
         // P2-10 run id 末尾追加 4 位序号，同一秒同 system prompt 的 run 不再撞 id
+        // WP1 再追加 4 位 session 命名空间段：YYYYMMDD-HHMMSS-xxxxxxxx-nnnn-序号
         bool idsOk = true;
         for (const auto& r : cr.runs) {
-            if (r.id.size() != 29 || r.id[8] != '-' || r.id[15] != '-' || r.id[24] != '-') idsOk = false;
+            if (r.id.size() != 34 || r.id[8] != '-' || r.id[15] != '-' || r.id[24] != '-' || r.id[29] != '-')
+                idsOk = false;
         }
-        t.check(idsOk, "P2-10 run id 形如 YYYYMMDD-HHMMSS-xxxx-序号");
+        t.check(idsOk, "P2-10 run id 形如 YYYYMMDD-HHMMSS-xxxx-nnnn-序号");
         t.check(cr.runs[0].id != cr.runs[1].id, "P2-10 同一链内 run id 唯一");
 
         auto again = buildChainFromEvents(dir + "/t14_two_tasks_same_system");
@@ -1259,6 +1261,16 @@ int cmdSelftest(const std::vector<std::string>& args) {
             }
             t.check(args3, "M4 diff fixture T3 参数变化");
             t.check(result3, "M4 diff fixture T3 结果变化");
+
+            // WP1：run id 含 session 命名空间，两个目录即使时间戳/根哈希相同也不再撞 id
+            const std::string bId = primaryRun(baseChain.value)->id;
+            const std::string cId = primaryRun(curChain.value)->id;
+            t.check(bId.substr(0, 24) == cId.substr(0, 24) && bId != cId,
+                    "WP1 同时间戳同根哈希的两个 session run id 不同");
+            auto baseAgain = buildChainFromEvents(dir + "/t13_diff_base");
+            t.check(baseAgain.ok() && primaryRun(baseAgain.value) &&
+                        primaryRun(baseAgain.value)->id == bId,
+                    "WP1 同一 fixture 重复 replay run id 稳定");
         } else {
             t.check(false, "M4 diff fixture 加载失败");
         }
