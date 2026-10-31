@@ -11,6 +11,7 @@
 
 #include "chain/run.h"
 #include "common/time_util.h"
+#include "common/utf8.h"
 #include "graph/mermaid.h"
 #include "store/events_reader.h"
 #include "store/run_index.h"
@@ -40,8 +41,8 @@ std::string readAll(const std::string& path) {
 }
 
 std::string trimText(const std::string& s, std::size_t maxLen) {
-    if (s.size() <= maxLen) return s;
-    return s.substr(0, maxLen) + "…";
+    // 字节截断会切在多字节字符中间，拼上省略号后不再是合法 UTF-8，j.dump() 直接 500
+    return utf8Truncate(s, maxLen);
 }
 
 bool validRunId(const std::string& id) {
@@ -320,6 +321,7 @@ WebResponse webUiPage() {
   .banner{border:1px solid #e3c58e;background:#faf3e3;color:#6b4b00;border-radius:10px;padding:10px 14px;
           margin-bottom:14px;font-size:13px}
   .banner.bad{border-color:#f1b9b9;background:#fdeeee;color:#a12b2b}
+  .neterr{position:fixed;right:14px;bottom:14px;z-index:60;max-width:70%;box-shadow:var(--shadow)}
   h2{font-size:14px;font-weight:650;margin:22px 0 10px;color:var(--fg)}
   .flow{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;overflow:auto;
         box-shadow:var(--shadow)}
@@ -391,7 +393,30 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp
 
 async function api(path) {
   const r = await fetch(path, { cache: 'no-store' });
+  if (!r.ok) {
+    let msg = 'HTTP ' + r.status;
+    try { const j = await r.json(); if (j && j.error) msg = j.error; } catch (_) {}
+    const e = new Error(msg);
+    e.status = r.status;
+    throw e;
+  }
   return r.json();
+}
+
+// 轮询失败不再静默冻结：右下角提示，下一次轮询成功自动消失
+function showNetErr(msg) {
+  let el = document.getElementById('neterr');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'neterr';
+    el.className = 'banner bad neterr';
+    document.body.appendChild(el);
+  }
+  el.textContent = '加载失败，自动重试中：' + msg;
+}
+function clearNetErr() {
+  const el = document.getElementById('neterr');
+  if (el) el.remove();
 }
 
 function renderList() {
@@ -440,7 +465,8 @@ async function loadRuns() {
 async function loadRun() {
   if (!selected) return;
   let d;
-  try { d = await api('/__xray/api/run?id=' + encodeURIComponent(selected) + (selectedRun ? '&run=' + encodeURIComponent(selectedRun) : '')); } catch (e) { return; }
+  try { d = await api('/__xray/api/run?id=' + encodeURIComponent(selected) + (selectedRun ? '&run=' + encodeURIComponent(selectedRun) : '')); } catch (e) { showNetErr(e && e.message ? e.message : String(e)); return; }
+  clearNetErr();
   if (d.error) { mainEl.innerHTML = '<div class="banner bad">' + esc(d.error) + '</div>'; return; }
   const key = d.id + '|' + d.steps.length + '|' + d.endedAt + '|' + d.live + '|' + d.total.tokens + '|' + d.total.observed + '|' + d.failTools;
   if (key === lastKey) return;
@@ -732,6 +758,7 @@ WebResponse webUiRun(const Config& cfg, const std::string& id, const std::string
         r.body = nlohmann::json{{"error", msg}}.dump();
         return r;
     };
+    try {
     if (!validRunId(id)) return fail(400, "非法 run id");
     if (!runId.empty() && !validRunId(runId)) return fail(400, "非法 run id");
 
@@ -777,6 +804,12 @@ WebResponse webUiRun(const Config& cfg, const std::string& id, const std::string
     addDegradedCounts(j, chain->unsupportedRequests, chain->parseFailed, chain->truncatedEvents);
     r.body = j.dump();
     return r;
+    } catch (const std::exception& e) {
+        // 建链/渲染/dump 中的任何异常都回 JSON 错误体，不再让 httplib 抛 500 空 body
+        return fail(500, std::string("渲染 run 失败: ") + e.what());
+    } catch (...) {
+        return fail(500, "渲染 run 失败: 未知错误");
+    }
 }
 
 bool webUiWantsHtml(const std::string& path, const std::string& accept) {

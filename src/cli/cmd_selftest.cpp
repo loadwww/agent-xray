@@ -18,6 +18,7 @@
 #include "cli/cli_common.h"
 #include "common/hash.h"
 #include "common/log.h"
+#include "common/utf8.h"
 #include "config/config.h"
 #include "diff/rundiff.h"
 #include "graph/mermaid.h"
@@ -772,6 +773,17 @@ void testM4Units(TestCtx& t, const std::string& fixturesDir) {
         std::vector<std::string> missing;
         t.check(validate(run, missing), "末尾 final_answer 不判定为采集缺失");
 
+        // AutoGPT 的 finish 同样是终止型工具
+        LLMResponse fin;
+        fin.toolCalls.push_back(ToolCall{"call_z", "finish", R"({"reason":"done"})"});
+        const Step sf = buildStep(0, LLMCall{}, fin, {});
+        t.check(sf.tools.empty(), "finish 不计入工具统计");
+        t.check(sf.kind == "final", "finish 使 Step 为 final");
+        Run run3;
+        run3.steps.push_back(sf);
+        std::vector<std::string> missing3;
+        t.check(validate(run3, missing3), "末尾 finish 不判定为采集缺失");
+
         // 非终止工具在末尾仍应判缺失
         LLMResponse normal;
         normal.toolCalls.push_back(ToolCall{"call_y", "get_weather", "{}"});
@@ -799,6 +811,27 @@ void testM4Units(TestCtx& t, const std::string& fixturesDir) {
 // 内置 Web UI：页面 + runs 列表 + 单 run 明细（采集中从 events.jsonl 实时建链）
 void testWebUi(TestCtx& t, const std::string& fixturesDir) {
     t.check(webUiPage().body.find("AgentXray") != std::string::npos, "UI 页面包含标题");
+    t.check(webUiPage().body.find("showNetErr") != std::string::npos, "UI 页面有轮询失败提示逻辑");
+
+    // utf8Truncate：截断点落在多字节字符中间时回退到字符边界，结果始终是合法 UTF-8
+    {
+        const std::string cn = "工具调用结果包含中文正文，用于复现字节截断问题。"; // 每字 3 字节
+        const std::string cut = utf8Truncate(cn, 11); // 落在第 4 个汉字中间
+        bool dumped = true;
+        try {
+            const nlohmann::json j = cut;
+            (void)j.dump();
+        } catch (...) {
+            dumped = false;
+        }
+        t.check(dumped, "utf8Truncate 截断结果可安全 dump 为 JSON（不再 type_error.316）");
+        t.check(cut.size() >= 3 && cut.compare(cut.size() - 3, 3, "…") == 0, "utf8Truncate 截断后追加省略号");
+        t.check(cut.size() == 12, "utf8Truncate 截到字符边界（9 字节正文 + 省略号，实际 " +
+                                  std::to_string(cut.size()) + "）");
+        t.check(cn.compare(0, 9, cut, 0, 9) == 0, "utf8Truncate 保留的前缀完整");
+        t.check(utf8Truncate("abcdefghij", 5) == "abcde…", "utf8Truncate ASCII 按原样截断");
+        t.check(utf8Truncate(cn, cn.size()) == cn, "utf8Truncate 不超长时原样返回");
+    }
     t.check(webUiPage().body.find("/__xray/api/runs") != std::string::npos, "UI 页面带 runs 接口");
     t.check(webUiWantsHtml("/", "text/html,application/xhtml+xml"), "UI 浏览器根路径识别");
     t.check(!webUiWantsHtml("/", "application/json"), "UI 非浏览器根路径不接管");
@@ -893,6 +926,48 @@ void testWebUi(TestCtx& t, const std::string& fixturesDir) {
         t.check(j3["steps"][0]["tools"][0]["errorInferred"].get<bool>(), "UI 403 工具标记为文本推断");
         t.check(j3["steps"][0]["failInferred"].get<int>() == 2, "UI 失败工具按等级计数");
         t.check(j3["steps"][0]["tools"][1]["isError"].get<bool>(), "UI Failed to 工具标记为失败");
+    }
+
+    // 回归：长多字节正文曾让 trimText 切在汉字中间，j.dump() 抛 type_error.316，/api/run 500
+    {
+        const std::filesystem::path longDir = tmp / "runs" / "20261030-123000-long";
+        std::filesystem::create_directories(longDir);
+        Run r;
+        r.id = "20261030-123000-long";
+        r.startedAt = "2026-10-30T12:30:00.000+08:00";
+        r.endedAt = "2026-10-30T12:30:20.000+08:00";
+        LLMCall call;
+        call.model = "deepseek-chat";
+        LLMResponse resp;
+        for (int i = 0; i < 60; ++i) resp.text += "读取文件并分析结果，正文包含大量中文内容。";
+        resp.usage = Usage{100, 20, 0, true};
+        resp.latencyMs = 1200;
+        ToolExec te;
+        te.callId = "call_l";
+        te.name = "read_file";
+        for (int i = 0; i < 30; ++i) te.arguments += "参数包含中文描述，";
+        for (int i = 0; i < 40; ++i) te.result += "工具返回内容很长，包含中文与路径，";
+        te.durationMs = 300;
+        Step s;
+        s.index = 0;
+        s.call = call;
+        s.response = resp;
+        s.tools = {te};
+        s.tokens = 120;
+        s.kind = "llm";
+        r.steps = {s};
+        writeTextFile((longDir / "run.json").string(), nlohmann::json(r).dump(2));
+
+        const auto dl = webUiRun(cfg, "20261030-123000-long", "");
+        t.check(dl.status == 200, "长中文正文的 run 明细返回 200（曾是 500）");
+        const auto jl = nlohmann::json::parse(dl.body, nullptr, false);
+        t.check(jl.is_object() && jl.contains("steps") && !jl["steps"].empty(), "长中文正文 run 明细可解析");
+        if (jl.is_object() && jl.contains("steps") && !jl["steps"].empty()) {
+            const std::string txt = jl["steps"][0]["text"].get<std::string>();
+            t.check(txt.size() <= 1203, "长正文截到 1200 字节预算内（实际 " + std::to_string(txt.size()) + "）");
+            const std::string tres = jl["steps"][0]["tools"][0]["result"].get<std::string>();
+            t.check(tres.size() <= 603, "长工具结果截到 600 字节预算内（实际 " + std::to_string(tres.size()) + "）");
+        }
     }
 
     t.check(webUiRun(cfg, "../etc", "").status == 400, "UI run 拒绝路径穿越 id");

@@ -93,9 +93,9 @@ std::vector<ToolExec> toolsFromDelta(const std::vector<Message>& prevMsgs,
 }
 
 bool isTerminalTool(const std::string& name) {
-    // 部分 agent 框架用"工具调用"来交付最终答案（smolagents 的 final_answer），
-    // 这类调用不产生真实工具执行，也不应有后续请求
-    return name == "final_answer";
+    // 部分 agent 框架用"工具调用"来交付最终答案（smolagents 的 final_answer、
+    // AutoGPT 的 finish），这类调用不产生真实工具执行，也不应有后续请求
+    return name == "final_answer" || name == "finish";
 }
 
 Step buildStep(int index, const LLMCall& call, const LLMResponse& resp, std::vector<ToolExec> tools) {

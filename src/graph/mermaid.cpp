@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "common/utf8.h"
+
 namespace axr {
 namespace {
 
@@ -22,8 +24,8 @@ std::string fmtSeconds(int ms) {
 }
 
 std::string shorten(const std::string& s, std::size_t maxLen) {
-    if (s.size() <= maxLen) return s;
-    return s.substr(0, maxLen) + "…";
+    // 同 trimText：多字节字符被切半会产出非法 UTF-8
+    return utf8Truncate(s, maxLen);
 }
 
 std::string stepNodeId(int index) { return "S" + std::to_string(index); }
