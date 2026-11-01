@@ -78,6 +78,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 需要完整历史与 tag，才能按上一个 tag 生成 What's changed
       - uses: actions/download-artifact@v4
         with:
           path: dist
