@@ -9,6 +9,7 @@
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <thread>
 
 #include "chain/fuzzy.h"
 #include "chain/link.h"
@@ -22,6 +23,8 @@
 #include "config/config.h"
 #include "diff/rundiff.h"
 #include "graph/mermaid.h"
+#include "httplib.h"
+#include "otel/otel.h"
 #include "parse/openai.h"
 #include "proxy/event.h"
 #include "proxy/inject.h"
@@ -343,6 +346,171 @@ proxy:
         t.check(expandHome("~/.xray") != "~/.xray", "M2 ~ 展开为真实目录");
         t.check(expandHome("~/.xray").find(".xra/") == std::string::npos, "M2 ~/.xray 展开未把 .xray 截断");
         t.check(expandHome("~/logs") == expandHome("~") + "/logs", "M2 ~ 展开拼接一致");
+    }
+}
+
+// B3：OTLP 导出 payload 结构与真实 HTTP 收发
+void testOtel(TestCtx& t) {
+    // 配置项解析：默认关闭，配置后生效
+    {
+        auto off = parseConfigText("proxy:\n");
+        t.check(off.ok() && off.value.otel.endpoint.empty(), "B3 otel.endpoint 默认空（零网络）");
+        auto on = parseConfigText("proxy:\n  listen: 8080\n  upstreams:\n    - match: \"/v1\"\n      url: \"http://x/v1\"\notel:\n  endpoint: \"http://localhost:4318/v1/traces\"\n  service_name: \"my-agent\"\n");
+        t.check(on.ok() && on.value.otel.endpoint == "http://localhost:4318/v1/traces", "B3 otel.endpoint 可配置");
+        t.check(on.ok() && on.value.otel.serviceName == "my-agent", "B3 otel.service_name 可配置");
+    }
+
+    // 构造一个带工具、带失败的 run，检查 span 树与属性
+    Run run;
+    run.id = "20261030-143012-a1b2c3d4-0001-0001";
+    run.startedAt = "2026-10-30T14:30:12.100+08:00";
+    run.endedAt = "2026-10-30T14:30:20.000+08:00";
+    run.incomplete = true;
+    run.missing = {"step 2: 消息数未增长"};
+    run.total = Usage{100, 50, 10, true};
+
+    for (int i = 0; i < 2; ++i) {
+        LLMCall call;
+        call.id = "h-" + std::to_string(i);
+        call.model = "deepseek-chat";
+        call.endpoint = "https://api.deepseek.com/v1/chat/completions";
+        call.startedAt = "2026-10-30T14:30:1" + std::to_string(2 + i) + ".000+08:00";
+        call.endedAt = "2026-10-30T14:30:1" + std::to_string(5 + i) + ".000+08:00";
+        LLMResponse resp;
+        resp.text = "SECRET-BODY-" + std::to_string(i);
+        resp.usage = Usage{10 + i, 5 + i, 0, true};
+        resp.finishReason = "tool_calls";
+        resp.latencyMs = 3000;
+        Step s;
+        s.index = i;
+        s.call = call;
+        s.response = resp;
+        s.kind = i == 1 ? "final" : "llm";
+        if (i == 0) {
+            ToolExec te;
+            te.callId = "call_1";
+            te.name = "get_weather";
+            te.arguments = R"({"city":"北京"})";
+            te.result = "SECRET-TOOL-RESULT";
+            te.durationMs = 800;
+            te.durationSource = "inferred";
+            s.tools = {te};
+        }
+        run.steps.push_back(s);
+    }
+
+    OtelOptions opts;
+    opts.serviceName = "agentxray-selftest";
+    const nlohmann::json payload = buildOtlpPayload(run, opts);
+    t.check(payload.contains("resourceSpans") && payload["resourceSpans"].size() == 1, "B3 payload 有 resourceSpans");
+    const auto& rs = payload["resourceSpans"][0];
+    const auto& spans = rs["scopeSpans"][0]["spans"];
+    t.check(spans.size() == 4, "B3 span 数 = 1 root + 2 step + 1 tool（实际 " +
+                                   std::to_string(spans.size()) + "）");
+    t.check(rs["resource"]["attributes"].size() >= 2 &&
+                rs["resource"]["attributes"][0]["value"]["stringValue"] == "agentxray-selftest",
+            "B3 resource 带 service.name");
+
+    // traceId / spanId 形态与父子关系
+    const std::string traceId = spans[0]["traceId"].get<std::string>();
+    const std::string rootId = spans[0]["spanId"].get<std::string>();
+    t.check(traceId.size() == 32 && traceId.find_first_not_of("0123456789abcdef") == std::string::npos,
+            "B3 traceId 是 32 位十六进制");
+    t.check(rootId.size() == 16, "B3 spanId 是 16 位十六进制");
+    t.check(!spans[0].contains("parentSpanId"), "B3 root span 无 parent");
+    t.check(spans[1]["parentSpanId"].get<std::string>() == rootId, "B3 step0 挂在 root 下");
+    t.check(spans[2]["parentSpanId"].get<std::string>() == spans[1]["spanId"].get<std::string>(),
+            "B3 tool 挂在所属 step 下");
+    t.check(spans[3]["parentSpanId"].get<std::string>() == rootId, "B3 step1 挂在 root 下");
+    t.check(spans[0]["startTimeUnixNano"].get<std::string>() < spans[0]["endTimeUnixNano"].get<std::string>(),
+            "B3 root span 起止时间有序");
+
+    auto attrStr = [](const nlohmann::json& span, const std::string& key) -> std::string {
+        for (const auto& a : span["attributes"]) {
+            if (a.value("key", "") == key) return a["value"].value("stringValue", "");
+        }
+        return "";
+    };
+    auto attrInt = [](const nlohmann::json& span, const std::string& key) -> std::string {
+        for (const auto& a : span["attributes"]) {
+            if (a.value("key", "") == key) return a["value"].value("intValue", "");
+        }
+        return "";
+    };
+    t.check(attrStr(spans[0], "gen_ai.operation.name") == "invoke_agent", "B3 root 标 invoke_agent");
+    t.check(attrStr(spans[1], "gen_ai.request.model") == "deepseek-chat", "B3 step 带 gen_ai.request.model");
+    t.check(attrInt(spans[1], "gen_ai.usage.input_tokens") == "10", "B3 step 带 gen_ai.usage.input_tokens");
+    t.check(attrStr(spans[2], "gen_ai.tool.name") == "get_weather", "B3 tool span 带 gen_ai.tool.name");
+    t.check(attrInt(spans[2], "agentxray.tool.duration_ms") == "800", "B3 tool span 带实测耗时");
+    t.check(spans[0]["status"].value("code", 0) == 2, "B3 incomplete run 的 root span 标 ERROR");
+
+    // 隐私：只导结构，不导正文
+    const std::string dumped = payload.dump();
+    t.check(dumped.find("SECRET-BODY") == std::string::npos && dumped.find("SECRET-TOOL-RESULT") == std::string::npos &&
+                dumped.find("北京") == std::string::npos,
+            "B3 payload 不含消息正文 / 工具参数与结果");
+
+    // 重复导出 id 稳定
+    const nlohmann::json again = buildOtlpPayload(run, opts);
+    t.check(again["resourceSpans"][0]["scopeSpans"][0]["spans"][0]["spanId"] == rootId,
+            "B3 重复导出 spanId 稳定");
+
+    // 空 endpoint：不导出、不报错、不发网络请求
+    {
+        std::string err;
+        const int n = exportRunDirToOtel("/nonexistent", OtelOptions{}, err);
+        t.check(n == 0 && err.empty(), "B3 endpoint 为空时直接跳过");
+    }
+    // 非法 endpoint
+    {
+        std::string err;
+        OtelOptions bad;
+        bad.endpoint = "localhost:4318";
+        const int n = exportRunDirToOtel("/nonexistent", bad, err);
+        t.check(n == -1 && !err.empty(), "B3 非法 endpoint 报错且不崩溃");
+    }
+
+    // 真实 HTTP：本地起一个 OTLP 接收端，走 forwardHttp 收发
+    {
+        namespace fs = std::filesystem;
+        const fs::path tmp = fs::temp_directory_path() / ("axr-otel-" + makeSessionId());
+        fs::create_directories(tmp);
+        writeTextFile((tmp / "run.json").string(), nlohmann::json(run).dump(2));
+
+        httplib::Server svr;
+        std::mutex mu;
+        std::string got;
+        int hits = 0;
+        svr.Post("/v1/traces", [&](const httplib::Request& req, httplib::Response& res) {
+            std::lock_guard<std::mutex> lk(mu);
+            got = req.body;
+            ++hits;
+            res.status = 200;
+        });
+        const int port = svr.bind_to_any_port("127.0.0.1");
+        bool ok = port > 0;
+        if (ok) {
+            std::thread th([&svr] { svr.listen_after_bind(); });
+            while (!svr.is_running()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+            OtelOptions live;
+            live.serviceName = "agentxray-selftest";
+            live.endpoint = "http://127.0.0.1:" + std::to_string(port) + "/v1/traces";
+            std::string err;
+            const int n = exportRunDirToOtel(tmp.string(), live, err);
+            t.check(n == 1 && err.empty(), "B3 导出到本地 OTLP 端点成功");
+
+            svr.stop();
+            th.join();
+            std::lock_guard<std::mutex> lk(mu);
+            t.check(hits == 1, "B3 OTLP 端点收到 1 次请求");
+            const nlohmann::json recv = nlohmann::json::parse(got, nullptr, false);
+            t.check(!recv.is_discarded() && recv.contains("resourceSpans"),
+                    "B3 收到的请求体是合法 OTLP JSON");
+        } else {
+            t.check(false, "B3 无法启动本地 OTLP 接收端");
+        }
+        fs::remove_all(tmp);
     }
 }
 
@@ -994,6 +1162,7 @@ int cmdSelftest(const std::vector<std::string>& args) {
     testHash(t);
     testModelRoundtrip(t);
     testM2Units(t);
+    testOtel(t);
     testToolErrorClassify(t);
     testUsageObserved(t);
     testM4Units(t, dir);

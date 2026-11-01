@@ -48,3 +48,8 @@ storage:
   root: "~/.xray"
   retention_days: 30
   idle_finalize_minutes: 10  # serve 空闲 10 分钟后自动收尾当前会话（<=0 关闭）
+
+# B3：可选 OTel 导出（默认关闭，留空 = 零网络）
+# otel:
+#   endpoint: "http://localhost:4318/v1/traces"   # 收尾后按 OTLP/HTTP 导出 traces
+#   service_name: "agentxray"

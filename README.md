@@ -150,6 +150,22 @@ proxy:
 
 Logs are redacted by default: `authorization` / `x-api-key` / `api-key` headers and `sk-...` / `Bearer` values are replaced before they hit disk. The proxy never reuses your key for anything else.
 
+### Send runs to any OTel backend (optional)
+
+Everything stays local by default. A finished run can also be emitted as OTLP/HTTP traces: one run becomes one trace, every LLM call and tool execution a child span carrying `gen_ai.*` attributes.
+
+```bash
+axr serve --otel-endpoint http://localhost:4318/v1/traces
+```
+
+```yaml
+otel:
+  endpoint: "http://localhost:4318/v1/traces"   # empty (default) = no export, no network
+  service_name: "agentxray"
+```
+
+Traces are sent when a run is finalized (idle rotation or Ctrl+C). Only structure, counts and timings are exported — message bodies, tool arguments and results stay in the local `run.json`. Point it at a local OTel Collector feeding Phoenix, Langfuse, Tempo, or any OTLP/HTTP endpoint.
+
 ## Comparison
 
 | | Langfuse | LangSmith | Phoenix | Helicone | AgentXray |
@@ -160,7 +176,7 @@ Logs are redacted by default: `authorization` / `x-api-key` / `api-key` headers 
 | Diff between two runs | No | No | No | No | **Yes** |
 | Evals / prompt management | Yes | Yes | Evals yes, prompts partial | Partial | **None — deliberately** |
 | Self-host footprint | ClickHouse + Redis + workers | Enterprise-only | One service | Several services | **One binary** |
-| Protocol scope | Framework SDKs | LangChain + SDK | Anything via OTel | Many providers via gateway | OpenAI-compatible `chat/completions` only |
+| Protocol scope | Framework SDKs | LangChain + SDK | Anything via OTel | Many providers via gateway | OpenAI-compatible `chat/completions` in; OTLP traces out (optional) |
 
 If you need evals, prompt management, datasets, or a team cloud, use Langfuse (or LangSmith / Phoenix / Helicone). Those are the right tools for that job, and most of them require instrumenting the code you're trying to debug.
 
@@ -178,7 +194,6 @@ If you need to see what an **uninstrumented** agent actually did — and diff tw
 
 ## Roadmap
 
-- OTel export (`axr serve --otel-endpoint`) so a local trace can also land in Langfuse / Phoenix.
 - Copy-paste recipes for more agents and frameworks.
 - macOS Homebrew formula.
 

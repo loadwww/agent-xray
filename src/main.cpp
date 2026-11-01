@@ -14,16 +14,16 @@
 namespace axr {
 namespace {
 
-const char* kVersion = "0.4.2";
+const char* kVersion = "0.4.3";
 
 void printUsage() {
     std::cout << "AgentXray " << kVersion << "\n\n"
               << "用法:\n"
               << "  axr demo [--port 8787] [--bind 127.0.0.1] [--allow-remote] [--no-open] [--diff]\n"
               << "  axr serve [--config config.yaml] [--root dir] [--listen port] [--bind host]\n"
-              << "            [--allow-remote]\n"
+              << "            [--allow-remote] [--otel-endpoint url]\n"
               << "  axr run [--config config.yaml] [--root dir] [--listen port] [--allow-remote]\n"
-              << "          -- <command...>\n"
+              << "          [--otel-endpoint url] -- <command...>\n"
               << "  axr list [--root dir] [--config config.yaml] [--json] [--all]\n"
               << "  axr show <run目录|events.jsonl|sessionID|runID> [--run runId] [--bench]\n"
               << "           [--config config.yaml] [--root dir]\n"

@@ -34,6 +34,8 @@ Status parseProxyArgs(const std::vector<std::string>& args, ProxyCliOpts& out) {
             }
         } else if (a == "--bind" && i + 1 < args.size()) {
             out.bind = args[++i];
+        } else if (a == "--otel-endpoint" && i + 1 < args.size()) {
+            out.otelEndpoint = args[++i];
         } else if (a == "--allow-remote") {
             out.allowRemote = true;
         } else if (!a.empty() && a[0] == '-') {
@@ -60,6 +62,7 @@ Result<Config> loadEffectiveConfig(const ProxyCliOpts& opts) {
     if (!opts.rootDir.empty()) cfg.storage.root = expandHome(opts.rootDir);
     if (opts.listen > 0) cfg.proxy.listen = opts.listen;
     if (!opts.bind.empty()) cfg.proxy.bind = opts.bind;
+    if (!opts.otelEndpoint.empty()) cfg.otel.endpoint = opts.otelEndpoint;
     return Result<Config>::Ok(cfg);
 }
 

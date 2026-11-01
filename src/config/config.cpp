@@ -129,6 +129,9 @@ void applyScalar(Config& cfg, const std::string& section, const std::string& key
         else if (key == "retention_days") cfg.storage.retentionDays = toInt(v, cfg.storage.retentionDays);
         else if (key == "idle_finalize_minutes")
             cfg.storage.idleFinalizeMinutes = toInt(v, cfg.storage.idleFinalizeMinutes);
+    } else if (section == "otel") {
+        if (key == "endpoint") cfg.otel.endpoint = v;
+        else if (key == "service_name") cfg.otel.serviceName = v;
     }
 }
 

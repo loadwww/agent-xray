@@ -14,6 +14,7 @@ struct ProxyCliOpts {
     std::string bind;
     int listen = -1;
     bool allowRemote = false; // P2-13：非回环 bind 必须显式开启
+    std::string otelEndpoint; // B3：--otel-endpoint，覆盖 config 里的 otel.endpoint
     std::vector<std::string> command; // "--" 之后的内容（axr run 用）
 };
 

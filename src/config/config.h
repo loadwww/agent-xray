@@ -56,6 +56,12 @@ struct Config {
         int idleFinalizeMinutes = 10;
     } storage;
 
+    struct OtelCfg {
+        // B3：收尾后把 run 导出成 OTLP/HTTP traces；留空 = 完全不导出（默认零网络）
+        std::string endpoint; // 如 http://localhost:4318/v1/traces
+        std::string serviceName = "agentxray";
+    } otel;
+
     ChainOptions chainOptions() const;
 };
 

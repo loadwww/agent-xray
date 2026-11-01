@@ -7,6 +7,7 @@
 #include "common/log.h"
 #include "common/time_util.h"
 #include "graph/mermaid.h"
+#include "otel/otel.h"
 #include "store/events_reader.h"
 #include "store/run_dir.h"
 #include "ui/report.h"
@@ -164,6 +165,19 @@ RunSummary finalizeRun(const std::string& runDir, const Config& cfg, long long d
     }
 
     writeMeta(runDir, s, primary, chain.value.runs, durationMs);
+
+    // B3：只有显式配置了 otel.endpoint 才导出；留空时零网络、零开销
+    if (!cfg.otel.endpoint.empty()) {
+        OtelOptions oo;
+        oo.endpoint = cfg.otel.endpoint;
+        oo.serviceName = cfg.otel.serviceName;
+        std::string err;
+        const int exported = exportRunDirToOtel(runDir, oo, err);
+        if (!err.empty())
+            logWarn("otel", err);
+        else if (exported > 0)
+            logInfo("otel", "已导出 " + std::to_string(exported) + " 个 run 到 " + cfg.otel.endpoint);
+    }
 
     logInfo("run", "分析完成: " + s.sessionId + " steps=" + std::to_string(s.stepCount) +
                         " tools=" + std::to_string(s.toolCount) + " tokens=" + std::to_string(s.totalTokens));

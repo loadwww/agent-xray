@@ -167,7 +167,7 @@ int cmdServe(const std::vector<std::string>& args) {
     if (!parsed.ok() || !opts.command.empty()) {
         std::cerr << (parsed.ok() ? "错误: serve 不接受 -- 之后的命令\n" : ("错误: " + parsed.err + "\n"))
                   << "用法: axr serve [--config config.yaml] [--root dir] [--listen port] [--bind host]"
-                     " [--allow-remote]\n";
+                     " [--allow-remote] [--otel-endpoint url]\n";
         return 2;
     }
 
@@ -220,6 +220,8 @@ int cmdServe(const std::vector<std::string>& args) {
     if (cfg.value.storage.idleFinalizeMinutes > 0)
         std::cout << "  空闲 " << cfg.value.storage.idleFinalizeMinutes
                   << " 分钟自动收尾并开新会话（storage.idle_finalize_minutes，<=0 关闭）\n";
+    if (!cfg.value.otel.endpoint.empty())
+        std::cout << "  OTel: 收尾后导出 traces 到 " << cfg.value.otel.endpoint << "\n";
     std::cout << "  按 Ctrl+C 结束并生成分析产物\n";
 
 #ifdef _WIN32

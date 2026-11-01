@@ -206,6 +206,23 @@ proxy:
 
 `model_map` 命中后日志会打印 `模型名改写: gpt-4o -> deepseek-chat`，落盘记录的是真实发给上游的请求体。
 
+### 可选：导出到 OTel 后端
+
+默认一切留在本机。收尾后的 run 也可以按 OTLP/HTTP 导出：一个 run 一条 trace，每次 LLM 调用与工具执行都是带 `gen_ai.*` 属性的子 span。
+
+```bash
+axr serve --otel-endpoint http://localhost:4318/v1/traces
+```
+
+```yaml
+otel:
+  endpoint: "http://localhost:4318/v1/traces"   # 留空（默认）= 完全不导出、零网络
+  service_name: "agentxray"
+```
+
+导出发生在 run 收尾时（空闲轮转或 Ctrl+C）。只导结构、计数与耗时；消息正文、工具参数与结果仍只留在本地 `run.json`。
+可指向本地 OTel Collector，再喂给 Phoenix、Langfuse、Tempo 或任意 OTLP/HTTP 端点。
+
 本地 Ollama 对外是 OpenAI 兼容的 `/v1`；经代理访问时把客户端 base URL 写成
 `http://127.0.0.1:8080/ollama/v1`（由上面的 `/ollama` 路由转到 `http://127.0.0.1:11434/v1`）。
 `axr run` 只注入 OpenAI 兼容的 `OPENAI_BASE_URL`/`OPENAI_API_BASE`/`DEEPSEEK_BASE_URL`，
