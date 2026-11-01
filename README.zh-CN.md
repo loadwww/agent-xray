@@ -270,7 +270,7 @@ v0.4.3 变更：
 - Web 端 `/__xray/api/run` 长多字节正文不再返回 500，前端不再静默吞掉错误；
 - 工具 `finish` 识别为终止工具，不再算作未完成的普通工具调用；
 - 新增 `docs/recipes.md` 与 README 的 Works with 配方表、和 Langfuse / LangSmith / Phoenix / Helicone 的对比表；
-- 预编译包自带 selftest fixtures，离线也能 `axr selftest` 全量自检。
+- 缺 fixtures 时 `axr selftest` 跳过依赖夹具的用例而不是误报失败，预编译包离线也能自检。
 
 v0.4.1 修复项：
 
