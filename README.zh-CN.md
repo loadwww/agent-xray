@@ -258,9 +258,19 @@ otel:
 
 ## 版本与更新
 
-当前版本 `v0.4.1`。Windows 单文件 `axr.exe` 随
+当前版本 `v0.4.3`。Windows / Linux 预编译包随
 [Releases](https://github.com/loadwww/agent-xray/releases) 发布；安装脚本总是拉取 latest，
 `axr version` 可查看本地版本。
+
+v0.4.3 变更：
+
+- 可选 OTel 导出：`axr serve --otel-endpoint http://localhost:4318/v1/traces`（或配置 `otel.endpoint`），
+  收尾后把一个 run 导成一条 trace，LLM 调用与工具执行为带 `gen_ai.*` 属性的子 span；只导结构 / 计数 / 耗时，
+  默认不导出、零网络；
+- Web 端 `/__xray/api/run` 长多字节正文不再返回 500，前端不再静默吞掉错误；
+- 工具 `finish` 识别为终止工具，不再算作未完成的普通工具调用；
+- 新增 `docs/recipes.md` 与 README 的 Works with 配方表、和 Langfuse / LangSmith / Phoenix / Helicone 的对比表；
+- 预编译包自带 selftest fixtures，离线也能 `axr selftest` 全量自检。
 
 v0.4.1 修复项：
 
